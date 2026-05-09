@@ -16,27 +16,32 @@ public class UserService {
 
     private final UserRepository userRepository;
 
-    public UserResponse getMe(String email) {
-        User user = userRepository.findByEmailAndStatus(email, UserStatus.ACTIVE)
+    public UserResponse getMe(Long userId) {
+        User user = userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.USER_NOT_FOUND));
         return toUserResponse(user);
     }
 
     @Transactional
-    public UserResponse updateMe(String email, UpdateUserRequest request) {
-        User user = userRepository.findByEmailAndStatus(email, UserStatus.ACTIVE)
+    public UserResponse updateMe(Long userId, UpdateUserRequest request) {
+        User user = userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.USER_NOT_FOUND));
-        user.updateProfile(request.industry(), request.companySize(),
-                request.jobLevel(), request.careerYear());
+        user.updateProfile(request.industry(), request.careerLevel());
         return toUserResponse(user);
     }
 
     private UserResponse toUserResponse(User user) {
         return new UserResponse(
-                user.getId(), user.getEmail(), user.getBirthYear(),
-                user.getIndustry(), user.getCompanySize(), user.getJobLevel(),
-                user.getCareerYear(), user.getPlan(), user.getFreeUsed(),
-                user.getCreditBalance(), user.getCreatedAt()
+                user.getId(),
+                user.isGuest(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getIndustry(),
+                user.getCareerLevel(),
+                user.getPlan(),
+                user.getFreeUsed(),
+                user.getCreditBalance(),
+                user.getCreatedAt()
         );
     }
 }

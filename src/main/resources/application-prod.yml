@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1700000
+      keepalive-time: 300000
+  jpa:
+    database-platform: org.hibernate.dialect.PostgreSQLDialect
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+jwt:
+  expiration: 3600000
+
+server:
+  port: 8080
+  tomcat:
+    accept-count: 100
+    max-connections: 8192
+    threads:
+      max: 200
+      min-spare: 10
+
+ai:
+  provider: gemini
+
+logging:
+  level:
+    root: WARN
+    com.example.tonefitserver: INFO
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

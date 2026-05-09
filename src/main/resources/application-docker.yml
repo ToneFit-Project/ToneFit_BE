@@ -6,5 +6,12 @@ spring:
     password: ${DB_PASSWORD:tonefit1234}
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
-    hibernate:
-      ddl-auto: update
+  flyway:
+    locations: classpath:db/migration
+
+ai:
+  provider: stub
+
+# docker compose 전용 디폴트 — 운영용 키 아님.
+jwt:
+  secret: ${JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-must-be-at-least-48-bytes-long}

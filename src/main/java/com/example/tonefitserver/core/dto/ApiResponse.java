@@ -10,12 +10,17 @@ public record ApiResponse<T>(
     }
 
     public static ApiResponse<?> error(String code, String message) {
-        return new ApiResponse<>(false, null, new ErrorResponse(code, message));
+        return error(code, message, null);
+    }
+
+    public static ApiResponse<?> error(String code, String message, Long sessionId) {
+        return new ApiResponse<>(false, null, new ErrorResponse(code, message, sessionId));
     }
 
     public record ErrorResponse(
             String code,
-            String message
+            String message,
+            Long sessionId
     ) {
     }
 }

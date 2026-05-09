@@ -5,8 +5,11 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Bean;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -14,6 +17,12 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Collections;
 
+/**
+ * Authorization: Bearer <jwt> 헤더를 검증하고 SecurityContext 에 인증 정보를 채운다.
+ *
+ * <p>principal 로는 user.id (Long) 을 설정하고, is_guest 플래그는 details 에 넣어둔다.
+ * 컨트롤러에서는 {@code @AuthenticationPrincipal Long userId} 로 받는다.
+ */
 @Component
 @RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
@@ -26,10 +35,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = resolveToken(request);
 
         if (token != null && jwtTokenProvider.validateToken(token)) {
-            String subject = jwtTokenProvider.getSubject(token);
-            // 권한 정보는 현재 비어있음 (Collections.emptyList())
+            Long userId = jwtTokenProvider.getUserId(token);
+            boolean isGuest = jwtTokenProvider.getIsGuest(token);
+
             UsernamePasswordAuthenticationToken authentication =
-                    new UsernamePasswordAuthenticationToken(subject, null, Collections.emptyList());
+                    new UsernamePasswordAuthenticationToken(userId, null, Collections.emptyList());
+            authentication.setDetails(isGuest);
             SecurityContextHolder.getContext().setAuthentication(authentication);
         }
 

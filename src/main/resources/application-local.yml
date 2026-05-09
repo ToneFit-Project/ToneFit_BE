@@ -1,11 +1,20 @@
 spring:
   datasource:
     driver-class-name: org.postgresql.Driver
-    url: jdbc:postgresql://localhost:15432/${DB_NAME:tonefitdb}
+    url: jdbc:postgresql://localhost:5432/${DB_NAME:tonefitdb}
     username: ${DB_USERNAME:tonefit_user}
     password: ${DB_PASSWORD:tonefit1234}
   jpa:
     database-platform: org.hibernate.dialect.PostgreSQLDialect
-    hibernate:
-      ddl-auto: update
     show-sql: true
+  flyway:
+    locations: classpath:db/migration,classpath:db/seed/local
+
+ai:
+  provider: ${AI_PROVIDER:stub}
+gemini:
+  api-key: ${GEMINI_API_KEY:}
+
+# 로컬 개발 전용 디폴트 — 운영용 키 아님. 문서에도 박혀 있어 외부 노출돼도 무관한 길이용 더미.
+jwt:
+  secret: ${JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-must-be-at-least-48-bytes-long}

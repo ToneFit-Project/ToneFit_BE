@@ -9,7 +9,7 @@ services:
       DB_PASSWORD: tonefit1234
       DB_NAME: tonefitdb
     ports:
-      - "8080:8080"
+      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
@@ -21,7 +21,7 @@ services:
       POSTGRES_USER: tonefit_user
       POSTGRES_PASSWORD: tonefit1234
     ports:
-      - "15432:5432"
+      - "5432:5432"
     volumes:
       - db-vol:/var/lib/postgresql/data
     healthcheck:

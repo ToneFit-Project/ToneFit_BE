@@ -15,15 +15,15 @@ public class RefreshToken {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false, unique = true, length = 512)
     private String token;
 
-    @Column(nullable = false)
-    private String email;
+    @Column(name = "user_id", nullable = false)
+    private Long userId;
 
-    public RefreshToken(String token, String email) {
+    public RefreshToken(String token, Long userId) {
         this.token = token;
-        this.email = email;
+        this.userId = userId;
     }
 
     public void updateToken(String token) {
