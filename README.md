@@ -27,6 +27,64 @@ Tonefit 서비스의 백엔드 시스템입니다. Java 21과 Spring Boot 4를 �
 
 ---
 
+## 🚢 배포 방법
+
+프로덕션 배포는 **GitHub Actions**가 자동으로 처리합니다. `main` 브랜치에 직접 push는 불가능하며, 반드시 PR을 통해 머지해야 합니다.
+
+### 배포 트리거 조건
+
+`gradle.properties`의 `version` 값이 변경된 채로 `main`에 머지될 때만 배포가 자동 실행됩니다.
+일반 기능 개발 PR은 배포를 트리거하지 않습니다.
+
+### 배포 절차
+
+```
+1단계: 기능 개발
+  feature/xxx 브랜치 → main PR 머지 (배포 없음)
+
+2단계: 배포
+  deploy/x.x.x 브랜치 생성
+  └── gradle.properties에서 version 값만 올리기 (예: 0.0.2 → 0.0.3)
+  └── main으로 PR 머지
+      └── GitHub Actions 자동 실행 → EC2 배포 완료
+```
+
+### 배포 브랜치 만들기
+
+```bash
+git switch main && git pull
+git switch -c deploy/0.0.3
+
+# gradle.properties 수정
+# version=0.0.2  →  version=0.0.3
+
+git add gradle.properties
+git commit -m "chore: version 0.0.3"
+git push origin deploy/0.0.3
+# → GitHub에서 main으로 PR 생성 후 머지
+```
+
+### 배포 진행 확인
+
+PR 머지 후 GitHub 저장소 → **Actions** 탭에서 진행 상황을 확인할 수 있습니다.
+`build` → `deploy` 순서로 실행되며, 두 단계 모두 초록색이면 배포 완료입니다.
+
+### 배포 구조 (참고)
+
+```
+GitHub Actions (build)
+  └── JAR 빌드 → S3 업로드
+
+GitHub Actions (deploy)
+  └── SSM Send Command → EC2
+        └── S3에서 JAR 다운로드
+        └── 서비스 재시작 (systemctl restart tonefit)
+```
+
+> EC2에 직접 SSH 접속 없이 AWS SSM을 통해 명령이 전달됩니다.
+
+---
+
 ## 🚀 시작하기
 
 ### 환경 설정
