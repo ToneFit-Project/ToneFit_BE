@@ -2,7 +2,9 @@ name: Deploy to EC2
 
 on:
   push:
-    branches: [main, feature/cicd]
+    branches: [main]
+    paths:
+      - 'gradle.properties'
 
 jobs:
   build:
