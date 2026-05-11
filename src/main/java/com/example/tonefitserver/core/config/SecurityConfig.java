@@ -57,9 +57,11 @@ public class SecurityConfig {
             // 토큰 없음·만료·서명 무효 등 인증 실패는 401 + ApiResponse 형식.
             // 기본값(403 AccessDenied) 그대로 두면 FE 가 refresh 트리거 분기를 못 잡음.
             .exceptionHandling(eh -> eh.authenticationEntryPoint(unauthorizedEntryPoint()))
-            // RateLimit 은 인증보다 먼저 — /auth/anonymous 같은 permitAll 경로에도 적용되어야 함.
-            .addFilterBefore(rateLimitFilter, JwtAuthenticationFilter.class)
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+            // 등록 순서 주의: anchor 로 쓸 필터(JwtAuthenticationFilter)를 먼저 등록한 뒤
+            // 그것을 anchor 로 하는 필터(RateLimitFilter)를 등록해야 filterOrders 에 인식됨.
+            // RateLimit 이 가장 먼저 실행되어 /auth/anonymous 같은 permitAll 경로에도 적용됨.
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+            .addFilterBefore(rateLimitFilter, JwtAuthenticationFilter.class);
         return http.build();
     }
 
