@@ -120,6 +120,10 @@ public class AuthService {
         if (!jwtTokenProvider.validateToken(refreshTokenString)) {
             throw new BusinessException(ErrorType.INVALID_TOKEN);
         }
+        // access token 으로 refresh 시도 차단 (대칭으로 refresh token 만 허용)
+        if (!JwtTokenProvider.TYPE_REFRESH.equals(jwtTokenProvider.getType(refreshTokenString))) {
+            throw new BusinessException(ErrorType.INVALID_TOKEN);
+        }
 
         RefreshToken refreshToken = refreshTokenRepository.findByToken(refreshTokenString)
                 .orElseThrow(() -> new BusinessException(ErrorType.INVALID_TOKEN));

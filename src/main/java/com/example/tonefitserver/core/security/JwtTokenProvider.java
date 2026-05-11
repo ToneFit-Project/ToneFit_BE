@@ -29,6 +29,9 @@ import java.util.Map;
 public class JwtTokenProvider {
 
     public static final String CLAIM_IS_GUEST = "is_guest";
+    public static final String CLAIM_TYPE = "type";
+    public static final String TYPE_ACCESS = "access";
+    public static final String TYPE_REFRESH = "refresh";
 
     @Value("${jwt.secret}")
     private String secretKeyString;
@@ -48,11 +51,12 @@ public class JwtTokenProvider {
 
     public String createAccessToken(Long userId, boolean isGuest) {
         return createToken(String.valueOf(userId), accessValidityInMilliseconds,
-                Map.of(CLAIM_IS_GUEST, isGuest));
+                Map.of(CLAIM_IS_GUEST, isGuest, CLAIM_TYPE, TYPE_ACCESS));
     }
 
     public String createRefreshToken(Long userId) {
-        return createToken(String.valueOf(userId), refreshValidityInMilliseconds, Map.of());
+        return createToken(String.valueOf(userId), refreshValidityInMilliseconds,
+                Map.of(CLAIM_TYPE, TYPE_REFRESH));
     }
 
     private String createToken(String subject, long validityInMilliseconds, Map<String, Object> claims) {
@@ -75,6 +79,12 @@ public class JwtTokenProvider {
     public boolean getIsGuest(String token) {
         Object v = getClaims(token).get(CLAIM_IS_GUEST);
         return v instanceof Boolean b && b;
+    }
+
+    /** 토큰 종류 — access / refresh. claim 없으면 null. */
+    public String getType(String token) {
+        Object v = getClaims(token).get(CLAIM_TYPE);
+        return v == null ? null : v.toString();
     }
 
     public boolean validateToken(String token) {

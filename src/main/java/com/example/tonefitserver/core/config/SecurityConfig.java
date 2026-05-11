@@ -1,6 +1,7 @@
 package com.example.tonefitserver.core.config;
 
 import com.example.tonefitserver.core.security.JwtAuthenticationFilter;
+import com.example.tonefitserver.core.security.RateLimitFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
@@ -27,6 +28,7 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
 
     @Bean
     public PasswordEncoder passwordEncoder() {
@@ -55,6 +57,8 @@ public class SecurityConfig {
             // 토큰 없음·만료·서명 무효 등 인증 실패는 401 + ApiResponse 형식.
             // 기본값(403 AccessDenied) 그대로 두면 FE 가 refresh 트리거 분기를 못 잡음.
             .exceptionHandling(eh -> eh.authenticationEntryPoint(unauthorizedEntryPoint()))
+            // RateLimit 은 인증보다 먼저 — /auth/anonymous 같은 permitAll 경로에도 적용되어야 함.
+            .addFilterBefore(rateLimitFilter, JwtAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
