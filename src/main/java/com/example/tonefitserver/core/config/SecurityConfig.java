@@ -80,7 +80,8 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(List.of(
                 "https://tonefit-six.vercel.app",
-                "http://localhost:8080"
+                "http://localhost:8080",
+                "https://tonefit.kr"
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
