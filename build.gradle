@@ -5,6 +5,7 @@ plugins {
 }
 
 group = 'com.example'
+version = '0.0.1-SNAPSHOT'
 description = 'tonefit-server'
 
 java {
@@ -40,6 +41,10 @@ dependencies {
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
     runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+    // Rate limiting (in-memory, 단일 인스턴스 가정. 분산 시 Bucket4j-redis 등으로 교체)
+    implementation 'com.bucket4j:bucket4j_jdk17-core:8.10.1'
+    implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     runtimeOnly 'org.postgresql:postgresql'

@@ -34,7 +34,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         String token = resolveToken(request);
 
-        if (token != null && jwtTokenProvider.validateToken(token)) {
+        if (token != null
+                && jwtTokenProvider.validateToken(token)
+                && JwtTokenProvider.TYPE_ACCESS.equals(jwtTokenProvider.getType(token))) {
+            // access token 만 인증 컨텍스트로 인정. refresh token 으로 API 직접 호출 차단.
+            // type claim 없는 옛 토큰도 거부 — 재로그인 필요.
             Long userId = jwtTokenProvider.getUserId(token);
             boolean isGuest = jwtTokenProvider.getIsGuest(token);
 

@@ -3,6 +3,7 @@ package com.example.tonefitserver.domain.correction.service;
 import com.example.tonefitserver.core.enums.ErrorType;
 import com.example.tonefitserver.core.enums.UserStatus;
 import com.example.tonefitserver.core.exception.BusinessException;
+import com.example.tonefitserver.core.security.TextSanitizer;
 import com.example.tonefitserver.domain.correction.ai.AiCorrectionClient;
 import com.example.tonefitserver.domain.correction.ai.AiCorrectionResult;
 import com.example.tonefitserver.domain.correction.ai.AiFinalizeResult;
@@ -107,7 +108,10 @@ public class CorrectionService {
                 .user(user)
                 .status(Status.IN_PROGRESS)
                 .build();
-        session.updateDraft(req.receiverType(), req.purpose(), req.subject(), req.originalEmail());
+        session.updateDraft(
+                req.receiverType(),
+                req.purpose(),
+                TextSanitizer.sanitize(req.originalEmail()));
         session.updateProtectedRanges(toRanges(req.protectedRanges()));
         session.updateInitialPromptVersion(activeInitialPrompt());
         CorrectionSession saved = sessionRepository.save(session);
@@ -235,7 +239,8 @@ public class CorrectionService {
         }
         CorrectionFeedback feedback = feedbackRepository.findBySessionIdAndIndex(sessionId, req.index())
                 .orElseThrow(() -> new BusinessException(ErrorType.NOT_FOUND, "교정 건을 찾을 수 없습니다."));
-        feedback.reject(req.reasonPrimary(), req.reasonSecondary(), req.reasonText());
+        feedback.reject(req.reasonPrimary(), req.reasonSecondary(),
+                TextSanitizer.sanitize(req.reasonText()));
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("correction_index", feedback.getIndex());
@@ -314,7 +319,9 @@ public class CorrectionService {
         if (session.getStatus() != Status.EDITING) {
             throw new BusinessException(ErrorType.INVALID_REQUEST, "EDITING 상태에서만 편집할 수 있습니다.");
         }
-        session.updateUserEdit(req.userFinal(), req.userSubject());
+        session.updateUserEdit(
+                TextSanitizer.sanitize(req.userFinal()),
+                TextSanitizer.sanitize(req.userSubject()));
         return new EditResponse(session.getId(), session.getStatus(), session.getUpdatedAt());
     }
 
@@ -328,7 +335,9 @@ public class CorrectionService {
         boolean edited = req != null
                 && (req.userFinal() != null || req.userSubject() != null);
         if (req != null) {
-            session.updateUserEdit(req.userFinal(), req.userSubject());
+            session.updateUserEdit(
+                    TextSanitizer.sanitize(req.userFinal()),
+                    TextSanitizer.sanitize(req.userSubject()));
         }
         session.updateStatus(Status.CONFIRMED);
 

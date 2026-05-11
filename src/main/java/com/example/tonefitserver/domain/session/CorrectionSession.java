@@ -96,10 +96,9 @@ public class CorrectionSession {
         this.status = status;
     }
 
-    public void updateDraft(Receiver receiverType, Purpose purpose, String subject, String original) {
+    public void updateDraft(Receiver receiverType, Purpose purpose, String original) {
         this.receiverType = receiverType;
         this.purpose = purpose;
-        this.subject = subject;
         this.original = original;
     }
 
