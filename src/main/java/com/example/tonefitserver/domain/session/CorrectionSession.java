@@ -70,6 +70,10 @@ public class CorrectionSession {
     @Column(name = "user_subject")
     private String userSubject;
 
+    /** 세션 당 재교정 누적 호출 수. 한도(현재 2회) 초과 시 429 거부. AI 성공 시점에만 증가. */
+    @Column(name = "recorrect_count", nullable = false)
+    private int recorrectCount;
+
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;
@@ -127,5 +131,9 @@ public class CorrectionSession {
     public void updateUserEdit(String userFinal, String userSubject) {
         if (userFinal != null) this.userFinal = userFinal;
         if (userSubject != null) this.userSubject = userSubject;
+    }
+
+    public void incrementRecorrectCount() {
+        this.recorrectCount++;
     }
 }

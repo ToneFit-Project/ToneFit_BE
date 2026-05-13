@@ -58,7 +58,11 @@ import java.util.Map;
 public class CorrectionService {
 
     private static final int PREVIEW_LENGTH = 50;
-    private static final List<Status> IN_PROGRESS_STATUSES = List.of(Status.IN_PROGRESS, Status.EDITING);
+    /** 세션 당 재교정 허용 횟수 (PM 결정). 초과 시 429 RECORRECT_LIMIT_EXCEEDED. */
+    private static final int RECORRECT_LIMIT = 2;
+    // listInProgress 응답에 포함될 status. RECORRECTING/FINALIZING 도 사용자 입장에선 진행 중인 세션이라 같이 노출.
+    private static final List<Status> IN_PROGRESS_STATUSES =
+            List.of(Status.IN_PROGRESS, Status.RECORRECTING, Status.FINALIZING, Status.EDITING);
 
     private final CorrectionSessionRepository sessionRepository;
     private final CorrectionFeedbackRepository feedbackRepository;
@@ -164,7 +168,7 @@ public class CorrectionService {
     }
 
     public CorrectionResponse recorrect(Long userId, Long sessionId, RecorrectRequest req) {
-        // TX1: 검증 + AI 입력 스냅샷 (세션 자체는 수정하지 않음 — 실패 시 롤백 부담 줄이기 위해)
+        // TX1: 검증 + 상태를 RECORRECTING 으로 전환 (in-flight 마커)
         AiCorrectionInput input = txTemplate.execute(status -> prepareRecorrect(userId, sessionId, req));
 
         // AI 호출 (트랜잭션 밖)
@@ -173,21 +177,24 @@ public class CorrectionService {
             result = aiClient.correct(input.promptContent(), input.receiver(), input.purpose(),
                     input.original(), input.protectedRanges());
         } catch (Exception e) {
+            // TX3: AI 실패 시 status 를 IN_PROGRESS 로 revert (재시도 가능 상태로 복귀)
+            txTemplate.executeWithoutResult(status -> revertSessionToInProgress(sessionId));
             throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
                     ErrorType.AI_SERVICE_ERROR.getMessage(), sessionId, e);
         }
 
-        // TX2: 세션 갱신 + feedback 교체
+        // TX2: 세션 갱신 + feedback 교체 + status → IN_PROGRESS
         return txTemplate.execute(status -> persistRecorrectResult(sessionId, req, result));
     }
 
     private AiCorrectionInput prepareRecorrect(Long userId, Long sessionId, RecorrectRequest req) {
         User user = loadUser(userId);
         CorrectionSession session = findOwnedSession(user.getId(), sessionId);
-        if (session.getStatus() != Status.IN_PROGRESS) {
-            throw new BusinessException(ErrorType.INVALID_REQUEST,
-                    "IN_PROGRESS 상태에서만 재교정할 수 있습니다.");
+        ensureInProgressOrLocked(session, "재교정");
+        if (session.getRecorrectCount() >= RECORRECT_LIMIT) {
+            throw new BusinessException(ErrorType.RECORRECT_LIMIT_EXCEEDED);
         }
+        session.updateStatus(Status.RECORRECTING);
 
         PromptVersion prompt = activeInitialPrompt();
         return new AiCorrectionInput(
@@ -206,6 +213,8 @@ public class CorrectionService {
 
         session.updateReceiverPurpose(req.receiverType(), req.purpose());
         session.updateInitialPromptVersion(activeInitialPrompt());
+        session.updateStatus(Status.IN_PROGRESS);
+        session.incrementRecorrectCount();
 
         feedbackRepository.deleteBySessionId(sessionId);
 
@@ -227,6 +236,26 @@ public class CorrectionService {
         feedbackRepository.saveAll(feedbacks);
 
         return toCorrectionResponse(session, result);
+    }
+
+    /**
+     * 동시 진입 차단 게이트.
+     * - IN_PROGRESS: 통과
+     * - RECORRECTING/FINALIZING: 다른 작업이 진행 중 → 409 SESSION_LOCKED
+     * - 그 외(EDITING/CONFIRMED/DRAFT): 잘못된 상태 → 400
+     */
+    private void ensureInProgressOrLocked(CorrectionSession session, String operation) {
+        Status current = session.getStatus();
+        if (current == Status.IN_PROGRESS) return;
+        if (current == Status.RECORRECTING || current == Status.FINALIZING) {
+            throw new BusinessException(ErrorType.SESSION_LOCKED);
+        }
+        throw new BusinessException(ErrorType.INVALID_REQUEST,
+                "IN_PROGRESS 상태에서만 " + operation + "할 수 있습니다.");
+    }
+
+    private void revertSessionToInProgress(Long sessionId) {
+        sessionRepository.findById(sessionId).ifPresent(s -> s.updateStatus(Status.IN_PROGRESS));
     }
 
     @Transactional
@@ -252,8 +281,7 @@ public class CorrectionService {
     }
 
     public FinalizeResponse finalize(Long userId, Long sessionId) {
-        // TX1: 검증 + 미처리 feedback 자동 수락 + final 프롬프트 지정 + 머지 산출
-        // (auto-accept 와 prompt 버전은 dirty checking 으로 TX 커밋 시 저장됨)
+        // TX1: 검증 + 미처리 feedback 자동 수락 + final 프롬프트 지정 + 머지 산출 + status → FINALIZING
         AiFinalizeInput input = txTemplate.execute(status -> prepareFinalize(userId, sessionId));
 
         // AI 호출 (트랜잭션 밖)
@@ -262,9 +290,8 @@ public class CorrectionService {
             result = aiClient.finalizePolish(input.promptContent(), input.receiver(), input.purpose(),
                     input.mergedText(), input.protectedRanges());
         } catch (Exception e) {
-            // AI 실패 시 rollback 없음 — auto-accept/prompt 갱신은 그대로 유지(재시도 시 멱등).
-            // 원래 동작은 트랜잭션 롤백이었지만, 분리 후엔 TX1 이 이미 커밋되어 있어 의도적으로 유지.
-            // 사용자가 재시도하면 prepareFinalize 가 다시 같은 작업을 수행 — auto-accept 는 멱등.
+            // TX3: AI 실패 시 status 를 IN_PROGRESS 로 revert (auto-accept 는 멱등이라 유지해도 무방)
+            txTemplate.executeWithoutResult(status -> revertSessionToInProgress(sessionId));
             throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
                     ErrorType.AI_SERVICE_ERROR.getMessage(), sessionId, e);
         }
@@ -276,16 +303,14 @@ public class CorrectionService {
     private AiFinalizeInput prepareFinalize(Long userId, Long sessionId) {
         User user = loadUser(userId);
         CorrectionSession session = findOwnedSession(user.getId(), sessionId);
-        if (session.getStatus() != Status.IN_PROGRESS) {
-            throw new BusinessException(ErrorType.INVALID_REQUEST,
-                    "IN_PROGRESS 상태에서만 최종 다듬기를 진행할 수 있습니다.");
-        }
+        ensureInProgressOrLocked(session, "최종 다듬기");
 
         List<CorrectionFeedback> feedbacks = feedbackRepository.findBySessionIdOrderByIndexAsc(sessionId);
         feedbacks.stream().filter(f -> f.getAction() == null).forEach(CorrectionFeedback::accept);
 
         PromptVersion finalPrompt = activeFinalPrompt();
         session.updateFinalPromptVersion(finalPrompt);
+        session.updateStatus(Status.FINALIZING);
 
         MergeResult merge = mergeForFinalize(session.getOriginal(), session.getProtectedRanges(), feedbacks);
 
