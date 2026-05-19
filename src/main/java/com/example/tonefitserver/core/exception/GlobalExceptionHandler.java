@@ -112,7 +112,7 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * 매핑되지 않은 경로. Spring Boot 6.1+ 의 ResourceHttpRequestHandler 가 던지는 표준 예외.
+     * 매핑되지 않은 경로. ResourceHttpRequestHandler 가 던지는 표준 예외.
      */
     @ExceptionHandler(NoResourceFoundException.class)
     public ResponseEntity<ApiResponse<?>> handleNoResource(NoResourceFoundException e) {
