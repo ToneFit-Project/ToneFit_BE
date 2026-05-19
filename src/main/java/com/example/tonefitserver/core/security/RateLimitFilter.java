@@ -10,6 +10,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
+import org.springframework.util.AntPathMatcher;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -35,9 +36,15 @@ import java.util.List;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
+    private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
+
     private static final List<RateLimitRule> RULES = List.of(
+            // 정확 경로
             new RateLimitRule("POST", "/api/v1/auth/anonymous", 10, Duration.ofMinutes(1)),
-            new RateLimitRule("POST", "/api/v1/corrections", 10, Duration.ofMinutes(1))
+            new RateLimitRule("POST", "/api/v1/corrections", 10, Duration.ofMinutes(1)),
+            new RateLimitRule("POST", "/api/v1/corrections/structure", 10, Duration.ofMinutes(1)),
+            // path variable 포함 — AntPathMatcher 로 매칭
+            new RateLimitRule("POST", "/api/v1/corrections/*/initial", 10, Duration.ofMinutes(1))
     );
 
     private final Cache<String, Bucket> buckets = Caffeine.newBuilder()
@@ -99,7 +106,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private record RateLimitRule(String method, String path, int capacity, Duration period) {
         boolean matches(HttpServletRequest req) {
-            return method.equals(req.getMethod()) && path.equals(req.getRequestURI());
+            if (!method.equals(req.getMethod())) return false;
+            // 와일드카드(* 또는 **) 포함된 경로는 AntPathMatcher 로, 아니면 정확 일치
+            if (path.contains("*")) {
+                return PATH_MATCHER.match(path, req.getRequestURI());
+            }
+            return path.equals(req.getRequestURI());
         }
 
         String id() {

@@ -17,6 +17,8 @@ public record CorrectionDetailResponse(
         Purpose purpose,
         String subject,
         String originalEmail,
+        /** 구조 교정이 적용된 본문. null 이면 구조 교정 미사용 세션. */
+        String structureCorrected,
         String aiFinal,
         String userFinal,
         String aiSubject,

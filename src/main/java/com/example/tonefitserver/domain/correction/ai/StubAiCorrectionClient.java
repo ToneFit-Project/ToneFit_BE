@@ -23,4 +23,10 @@ public class StubAiCorrectionClient implements AiCorrectionClient {
                                            String mergedText, List<Range> protectedRanges) {
         return new AiFinalizeResult(mergedText, "제목");
     }
+
+    @Override
+    public AiStructureResult correctStructure(String promptContent, Receiver receiver, Purpose purpose,
+                                              String original) {
+        return new AiStructureResult(original);
+    }
 }

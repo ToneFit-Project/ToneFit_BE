@@ -58,6 +58,13 @@ public class CorrectionSession {
     @Column(columnDefinition = "text")
     private String original;
 
+    /**
+     * 구조 교정 단계가 적용된 본문. null 이면 구조 교정 미사용 세션.
+     * 채워지면 이후 AI 호출(initial / recorrect / finalize) 의 입력으로 original 대신 사용됨.
+     */
+    @Column(name = "structure_corrected", columnDefinition = "text")
+    private String structureCorrected;
+
     @Column(name = "ai_final", columnDefinition = "text")
     private String aiFinal;
 
@@ -135,5 +142,14 @@ public class CorrectionSession {
 
     public void incrementRecorrectCount() {
         this.recorrectCount++;
+    }
+
+    public void updateStructureCorrected(String structureCorrected) {
+        this.structureCorrected = structureCorrected;
+    }
+
+    /** 이후 AI 호출 입력으로 쓸 텍스트. 구조 교정 적용된 세션이면 structureCorrected, 아니면 original. */
+    public String effectiveOriginal() {
+        return structureCorrected != null ? structureCorrected : original;
     }
 }

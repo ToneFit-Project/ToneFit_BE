@@ -13,6 +13,8 @@ import com.example.tonefitserver.domain.correction.dto.InProgressResponse;
 import com.example.tonefitserver.domain.correction.dto.RecorrectRequest;
 import com.example.tonefitserver.domain.correction.dto.RejectRequest;
 import com.example.tonefitserver.domain.correction.dto.RejectResponse;
+import com.example.tonefitserver.domain.correction.dto.StructureCorrectionRequest;
+import com.example.tonefitserver.domain.correction.dto.StructureCorrectionResponse;
 import com.example.tonefitserver.domain.correction.service.CorrectionService;
 import com.example.tonefitserver.domain.session.Purpose;
 import com.example.tonefitserver.domain.session.Receiver;
@@ -34,6 +36,22 @@ public class CorrectionController {
     public CorrectionResponse correct(@AuthenticationPrincipal Long userId,
                                       @Valid @RequestBody CorrectionRequest request) {
         return correctionService.correct(userId, request);
+    }
+
+    /** 선택적 구조 교정 단계. 세션 생성 + 구조 교정만 실행. 후속 1차 교정은 /initial 호출. */
+    @PostMapping("/structure")
+    @ResponseStatus(HttpStatus.CREATED)
+    public StructureCorrectionResponse structureCorrect(@AuthenticationPrincipal Long userId,
+                                                        @Valid @RequestBody StructureCorrectionRequest request) {
+        return correctionService.structureCorrect(userId, request);
+    }
+
+    /** 구조 교정 완료된 세션의 structure_corrected 기반으로 1차 교정 진입. */
+    @PostMapping("/{sessionId}/initial")
+    @ResponseStatus(HttpStatus.CREATED)
+    public CorrectionResponse initialAfterStructure(@AuthenticationPrincipal Long userId,
+                                                    @PathVariable Long sessionId) {
+        return correctionService.initialAfterStructure(userId, sessionId);
     }
 
     @PostMapping("/{sessionId}/recorrect")

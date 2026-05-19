@@ -7,6 +7,7 @@ import com.example.tonefitserver.core.security.TextSanitizer;
 import com.example.tonefitserver.domain.correction.ai.AiCorrectionClient;
 import com.example.tonefitserver.domain.correction.ai.AiCorrectionResult;
 import com.example.tonefitserver.domain.correction.ai.AiFinalizeResult;
+import com.example.tonefitserver.domain.correction.ai.AiStructureResult;
 import com.example.tonefitserver.domain.correction.dto.ConfirmRequest;
 import com.example.tonefitserver.domain.correction.dto.ConfirmResponse;
 import com.example.tonefitserver.domain.correction.dto.CorrectionDetailResponse;
@@ -21,6 +22,8 @@ import com.example.tonefitserver.domain.correction.dto.RecorrectRequest;
 import com.example.tonefitserver.domain.correction.dto.RejectRequest;
 import com.example.tonefitserver.domain.correction.dto.RejectResponse;
 import com.example.tonefitserver.domain.correction.dto.SessionSummary;
+import com.example.tonefitserver.domain.correction.dto.StructureCorrectionRequest;
+import com.example.tonefitserver.domain.correction.dto.StructureCorrectionResponse;
 import com.example.tonefitserver.domain.correction.model.Action;
 import com.example.tonefitserver.domain.correction.model.CorrectionFeedback;
 import com.example.tonefitserver.domain.correction.repository.CorrectionFeedbackRepository;
@@ -60,9 +63,15 @@ public class CorrectionService {
     private static final int PREVIEW_LENGTH = 50;
     /** 세션 당 재교정 허용 횟수 (PM 결정). 초과 시 429 RECORRECT_LIMIT_EXCEEDED. */
     private static final int RECORRECT_LIMIT = 2;
-    // listInProgress 응답에 포함될 status. RECORRECTING/FINALIZING 도 사용자 입장에선 진행 중인 세션이라 같이 노출.
-    private static final List<Status> IN_PROGRESS_STATUSES =
-            List.of(Status.IN_PROGRESS, Status.RECORRECTING, Status.FINALIZING, Status.EDITING);
+    // listInProgress 응답에 포함될 status. 진행 중(in-flight 포함)·검토 대기·편집 단계 모두 노출.
+    private static final List<Status> IN_PROGRESS_STATUSES = List.of(
+            Status.IN_PROGRESS,
+            Status.STRUCTURE_REVIEW,
+            Status.STRUCTURING,
+            Status.RECORRECTING,
+            Status.FINALIZING,
+            Status.EDITING
+    );
 
     private final CorrectionSessionRepository sessionRepository;
     private final CorrectionFeedbackRepository feedbackRepository;
@@ -83,6 +92,127 @@ public class CorrectionService {
     void initTxTemplate() {
         this.txTemplate = new TransactionTemplate(transactionManager);
     }
+
+    // ====== 구조 교정 (선택 단계, 1차 교정 전) ======
+
+    /**
+     * 구조 교정 1회성 호출. 세션을 새로 만들고 구조 교정 AI 결과를 저장한 뒤 STRUCTURE_REVIEW 상태로 둔다.
+     * 사용자가 결과 확인 후 {@link #initialAfterStructure} 로 1차 교정 진행.
+     */
+    public StructureCorrectionResponse structureCorrect(Long userId, StructureCorrectionRequest req) {
+        // TX1: 세션 생성 + STRUCTURING 진입
+        AiStructureInput input = txTemplate.execute(status -> prepareStructure(userId, req));
+
+        AiStructureResult result;
+        try {
+            result = aiClient.correctStructure(input.promptContent(), input.receiver(),
+                    input.purpose(), input.original());
+        } catch (Exception e) {
+            // 실패 시 세션 통째 삭제 (1회성이라 revert 의미 없음)
+            txTemplate.executeWithoutResult(status -> deleteFailedSession(input.sessionId()));
+            throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
+                    ErrorType.AI_SERVICE_ERROR.getMessage(), input.sessionId(), e);
+        }
+
+        // TX2: structure_corrected 저장 + status STRUCTURE_REVIEW
+        return txTemplate.execute(status -> persistStructureResult(input.sessionId(), result));
+    }
+
+    private AiStructureInput prepareStructure(Long userId, StructureCorrectionRequest req) {
+        User user = loadUser(userId);
+        CorrectionSession session = CorrectionSession.builder()
+                .user(user)
+                .status(Status.STRUCTURING)
+                .build();
+        // updateDraft 시그니처가 (receiver, purpose, original) — subject 없음
+        session.updateDraft(req.receiverType(), req.purpose(), TextSanitizer.sanitize(req.originalEmail()));
+        // 구조 교정 prompt — active STRUCTURE 가 있으면 사용, 없으면 GeminiAiCorrectionClient default 사용
+        PromptVersion prompt = activeStructurePrompt();
+        if (prompt != null) {
+            session.updateInitialPromptVersion(prompt); // initial_prompt_ver_id 자리에 임시 저장 (구조 단계 prompt 추적)
+        }
+        CorrectionSession saved = sessionRepository.save(session);
+
+        return new AiStructureInput(
+                saved.getId(),
+                prompt != null ? prompt.getContent() : null,
+                saved.getReceiverType(),
+                saved.getPurpose(),
+                saved.getOriginal()
+        );
+    }
+
+    private StructureCorrectionResponse persistStructureResult(Long sessionId, AiStructureResult result) {
+        CorrectionSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new BusinessException(ErrorType.NOT_FOUND, "세션을 찾을 수 없습니다."));
+        session.updateStructureCorrected(result.structureCorrected());
+        session.updateStatus(Status.STRUCTURE_REVIEW);
+        // 구조 교정 단계의 prompt 는 임시로 initial_prompt_ver_id 자리에 저장했으므로,
+        // 다음 단계(initial) 에서 active INITIAL prompt 로 덮어쓰여짐.
+        return new StructureCorrectionResponse(
+                session.getId(), result.structureCorrected(), session.getCreatedAt());
+    }
+
+    /**
+     * 구조 교정 완료된 세션을 기반으로 1차 교정 실행.
+     * AI 입력으로 session.original 대신 session.structureCorrected 사용 (effectiveOriginal).
+     */
+    public CorrectionResponse initialAfterStructure(Long userId, Long sessionId) {
+        // TX1: STRUCTURE_REVIEW 검증 + STRUCTURING 또는 IN_PROGRESS... 가 아닌 별도 in-flight 필요
+        // 여기선 RECORRECTING 와 비슷하게 한시적 마커 도입 대신, STRUCTURE_REVIEW → IN_PROGRESS 직접 전환 + 동시성은 SESSION_LOCKED 게이트로 차단
+        AiCorrectionInput input = txTemplate.execute(status -> prepareInitialAfterStructure(userId, sessionId));
+
+        AiCorrectionResult result;
+        try {
+            result = aiClient.correct(input.promptContent(), input.receiver(), input.purpose(),
+                    input.original(), input.protectedRanges());
+        } catch (Exception e) {
+            // 실패 시 STRUCTURE_REVIEW 로 복원 (재시도 가능 상태)
+            txTemplate.executeWithoutResult(status -> revertSessionToStructureReview(sessionId));
+            throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
+                    ErrorType.AI_SERVICE_ERROR.getMessage(), sessionId, e);
+        }
+
+        return txTemplate.execute(status -> persistInitialCorrectionResult(sessionId, result));
+    }
+
+    private AiCorrectionInput prepareInitialAfterStructure(Long userId, Long sessionId) {
+        User user = loadUser(userId);
+        CorrectionSession session = findOwnedSession(user.getId(), sessionId);
+        // STRUCTURE_REVIEW 만 허용. 다른 상태면 분기 처리
+        Status current = session.getStatus();
+        if (current == Status.STRUCTURING) {
+            throw new BusinessException(ErrorType.SESSION_LOCKED);
+        }
+        if (current != Status.STRUCTURE_REVIEW) {
+            throw new BusinessException(ErrorType.INVALID_REQUEST,
+                    "구조 교정이 선행되지 않았거나 이미 1차 교정이 완료된 세션입니다.");
+        }
+        // 1차 교정 진입 — IN_PROGRESS 로 전환 (in-flight 마커는 별도 추가 안 함, SESSION_LOCKED 검사는 위 status 체크가 대체)
+        session.updateStatus(Status.IN_PROGRESS);
+        session.updateInitialPromptVersion(activeInitialPrompt());
+
+        return new AiCorrectionInput(
+                sessionId,
+                session.getInitialPromptVersion() != null ? session.getInitialPromptVersion().getContent() : null,
+                session.getReceiverType(),
+                session.getPurpose(),
+                session.effectiveOriginal(),
+                session.getProtectedRanges()
+        );
+    }
+
+    private void revertSessionToStructureReview(Long sessionId) {
+        sessionRepository.findById(sessionId).ifPresent(s -> s.updateStatus(Status.STRUCTURE_REVIEW));
+    }
+
+    private PromptVersion activeStructurePrompt() {
+        return promptVersionRepository
+                .findFirstByPurposeAndIsActiveTrueOrderByCreatedAtDesc(PromptPurpose.STRUCTURE)
+                .orElse(null);
+    }
+
+    // ====== 일반 교정 (기존) ======
 
     public CorrectionResponse correct(Long userId, CorrectionRequest req) {
         // TX1: 새 세션 생성 + IN_PROGRESS 진입 + AI 입력 스냅샷
@@ -125,7 +255,7 @@ public class CorrectionService {
                 saved.getInitialPromptVersion() != null ? saved.getInitialPromptVersion().getContent() : null,
                 saved.getReceiverType(),
                 saved.getPurpose(),
-                saved.getOriginal(),
+                saved.effectiveOriginal(),  // 신규 세션은 structure_corrected null 이라 사실상 original 과 동일
                 saved.getProtectedRanges()
         );
     }
@@ -202,7 +332,7 @@ public class CorrectionService {
                 prompt != null ? prompt.getContent() : null,
                 req.receiverType(),
                 req.purpose(),
-                session.getOriginal(),
+                session.effectiveOriginal(),  // 구조 교정 적용 세션이면 structure_corrected 사용
                 session.getProtectedRanges()
         );
     }
@@ -312,7 +442,9 @@ public class CorrectionService {
         session.updateFinalPromptVersion(finalPrompt);
         session.updateStatus(Status.FINALIZING);
 
-        MergeResult merge = mergeForFinalize(session.getOriginal(), session.getProtectedRanges(), feedbacks);
+        // 구조 교정 적용 세션이면 effectiveOriginal(structure_corrected) 기준으로 머지.
+        // feedback 의 start/end 좌표도 structure_corrected 기준이라 일관됨.
+        MergeResult merge = mergeForFinalize(session.effectiveOriginal(), session.getProtectedRanges(), feedbacks);
 
         return new AiFinalizeInput(
                 sessionId,
@@ -413,6 +545,7 @@ public class CorrectionService {
                 session.getPurpose(),
                 session.getSubject(),
                 session.getOriginal(),
+                session.getStructureCorrected(),
                 session.getAiFinal(),
                 session.getUserFinal(),
                 session.getAiSubject(),
@@ -570,13 +703,54 @@ public class CorrectionService {
     ) {
     }
 
+    /** 구조 교정 단계의 AI 입력 스냅샷. protected_ranges 미지원. */
+    private record AiStructureInput(
+            Long sessionId,
+            String promptContent,
+            Receiver receiver,
+            Purpose purpose,
+            String original
+    ) {
+    }
+
     private CorrectionResponse toCorrectionResponse(CorrectionSession s, AiCorrectionResult r) {
-        List<CorrectionResponse.ChangeItem> items = r.changes().stream()
+        List<AiCorrectionResult.Change> changes = r.changes();
+        // Gemini 가 보낸 corrected_email 대신 원문 + sanitize 통과한 changes 로 재조립.
+        // 이유: sanitize 에서 drop 된 변경(콤마 묶음, 매칭 실패 등)이 Gemini 응답에는 적용되어 있지만
+        // 우리 changes 배열에는 없는 silent change 가 됨. 사용자 화면이 changes 와 어긋나 보임.
+        // 재조립으로 changes 와 corrected_email 일관성 확보. Gemini 의 부수적 polishing(미세 공백 정리 등)은 손실됨.
+        String correctedEmail = reconstructCorrected(s.effectiveOriginal(), changes);
+
+        List<CorrectionResponse.ChangeItem> items = changes.stream()
                 .map(c -> new CorrectionResponse.ChangeItem(
                         c.index(), c.start(), c.end(), c.original(), c.corrected(), c.reason(),
                         c.label(), c.confidence(), c.appliedRules(), null))
                 .toList();
-        return new CorrectionResponse(s.getId(), r.correctedEmail(), items, s.getUpdatedAt());
+        return new CorrectionResponse(s.getId(), correctedEmail, items, s.getUpdatedAt());
+    }
+
+    /** original 에 sanitize 통과한 changes 를 start 오름차순으로 substitute 해서 corrected_email 재조립. */
+    private String reconstructCorrected(String original, List<AiCorrectionResult.Change> changes) {
+        if (original == null) return null;
+        if (changes == null || changes.isEmpty()) return original;
+
+        List<AiCorrectionResult.Change> sorted = changes.stream()
+                .sorted(Comparator.comparingInt(AiCorrectionResult.Change::start))
+                .toList();
+
+        StringBuilder sb = new StringBuilder(original.length());
+        int cursor = 0;
+        for (AiCorrectionResult.Change c : sorted) {
+            if (c.start() < cursor) continue; // overlap 방어
+            if (c.start() > original.length() || c.end() > original.length()) continue;
+            sb.append(original, cursor, c.start());
+            sb.append(c.corrected());
+            cursor = c.end();
+        }
+        if (cursor < original.length()) {
+            sb.append(original, cursor, original.length());
+        }
+        return sb.toString();
     }
 
     private SessionSummary toSessionSummary(CorrectionSession s) {

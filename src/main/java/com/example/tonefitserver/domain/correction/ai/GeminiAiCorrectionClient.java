@@ -28,25 +28,40 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
 
     private static final String DEFAULT_CORRECTION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 교정 어시스턴트입니다.
-            입력된 이메일 본문을 검토하고 다음을 반환하세요.
-            1) corrected_email: 전체를 교정한 최종 본문
-            2) changes: 교정 항목 배열 (index는 0부터, 본문 등장 순서대로 나열)
-               - original: 원문에 실제로 존재하는 교정 대상 문자열 (수정/가공 금지)
-               - corrected: 교정 후 문자열
-               - reason: 교정 사유
-               - label: 맞춤법/문법은 AUTO, 톤은 SUGGEST, 스타일은 STYLE
-               - confidence: 0.0 ~ 1.0
-               - applied_rules: 참고한 규칙 코드 배열 (없으면 빈 배열)
+            입력된 이메일 본문을 검토하고 교정 항목(changes) 배열만 반환하세요.
+            전체 교정 본문은 서버가 원문 + changes 로 재조립하므로 별도 반환할 필요 없습니다.
+
+            changes 각 항목 (index 는 0부터, 본문 등장 순서):
+            - original: 원문에 실제로 존재하는 교정 대상 substring (정확히 그대로 발췌, 가공 금지)
+            - corrected: 교정 후 문자열
+            - reason: 교정 사유
+            - label: 맞춤법/문법 AUTO, 톤 SUGGEST, 스타일 STYLE
+            - confidence: 0.0 ~ 1.0
+            - applied_rules: 참고한 규칙 코드 배열 (없으면 빈 배열)
 
             [보호 구간 규칙]
             입력 본문에 "⟦" 와 "⟧" 로 감싸진 구간이 있을 수 있습니다. 해당 구간은 보호 텍스트입니다.
             - 보호 구간 내부의 텍스트는 어떤 이유로도 수정하지 마세요.
-            - 응답 corrected_email 안에도 "⟦" "⟧" 마커와 그 안의 내용을 원문과 동일하게 그대로 포함하세요.
             - 보호 구간에 대한 change 항목은 생성하지 마세요.
 
             [줄바꿈 규칙]
             원문의 개행 구조(문단 구분)를 있는 그대로 보존하세요.
             추가로 개행을 삽입하거나 제거하지 마세요.
+            """;
+
+    private static final String DEFAULT_STRUCTURE_SYSTEM_PROMPT = """
+            당신은 한국어 비즈니스 이메일의 구조를 정리하는 어시스턴트입니다.
+            입력된 이메일 본문의 문장 순서를 자연스럽게 재배치하거나, 너무 긴 문장은 분할하고,
+            지나치게 짧은 관련 문장은 결합해 가독성을 높이세요.
+
+            [원칙]
+            - 의미와 정보를 보존하세요. 새로운 내용 추가 금지.
+            - 어휘는 가능한 한 유지하세요. 표현/맞춤법 교정은 별도 단계에서 합니다.
+            - 인사말, 마무리, 핵심 본문의 위치가 비즈니스 이메일 관례에 맞도록 정리하세요.
+
+            [출력 형식]
+            응답은 JSON Schema 로 강제됩니다:
+            { "structure_corrected": "<재구성된 전체 본문>" }
             """;
 
     private static final String DEFAULT_FINALIZE_SYSTEM_PROMPT = """
@@ -90,6 +105,24 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         List<AiCorrectionResult.Change> cleanedChanges = sanitizeChanges(
                 original == null ? "" : original, protectedRanges, raw.changes());
         return new AiCorrectionResult(cleanedEmail, cleanedChanges);
+    }
+
+    @Override
+    public AiStructureResult correctStructure(String promptContent, Receiver receiver, Purpose purpose,
+                                              String original) {
+        String system = (promptContent == null || promptContent.isBlank())
+                ? DEFAULT_STRUCTURE_SYSTEM_PROMPT : promptContent;
+        String user = buildCorrectionUserMessage(receiver, purpose, original == null ? "" : original);
+        String json = callAndExtract(system, user, structureSchema());
+
+        AiStructureResult raw;
+        try {
+            raw = objectMapper.readValue(json, AiStructureResult.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to parse Gemini structure response: " + json, e);
+        }
+        // 구조 교정도 보호 구간 마커 제거 호환성 차원에서 restore (default prompt 엔 마커 안 쓰지만 PM prompt 따라 다를 수 있음)
+        return new AiStructureResult(restoreFromAi(raw.structureCorrected()));
     }
 
     @Override
@@ -312,13 +345,24 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
                 "reason", "label", "confidence", "applied_rules"));
 
         Map<String, Object> rootProps = new LinkedHashMap<>();
-        rootProps.put("corrected_email", Map.of("type", "string"));
+        // corrected_email 제거 — 서버가 원문 + changes 로 재조립하므로 Gemini 출력 토큰 절약.
         rootProps.put("changes", Map.of("type", "array", "items", changeItem));
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
         root.put("properties", rootProps);
-        root.put("required", List.of("corrected_email", "changes"));
+        root.put("required", List.of("changes"));
+        return root;
+    }
+
+    private Map<String, Object> structureSchema() {
+        Map<String, Object> props = new LinkedHashMap<>();
+        props.put("structure_corrected", Map.of("type", "string"));
+
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("type", "object");
+        root.put("properties", props);
+        root.put("required", List.of("structure_corrected"));
         return root;
     }
 
