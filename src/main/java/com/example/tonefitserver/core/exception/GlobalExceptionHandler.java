@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.validation.BindingResult;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
@@ -13,9 +14,11 @@ import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
+import java.io.IOException;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -117,6 +120,44 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(ErrorType.NOT_FOUND.getStatus())
                 .body(ApiResponse.error(ErrorType.NOT_FOUND.getCode(), "요청한 경로를 찾을 수 없습니다."));
+    }
+
+    /**
+     * 클라이언트가 응답 수신 전에 연결을 끊은 경우 — Broken pipe / Connection reset.
+     * 서버 버그가 아닌 정상 네트워크 현상이므로 WARN 으로 다운그레이드, 응답 쓰기 시도 안 함.
+     * 흔한 원인: FE/브라우저 timeout, 사용자 페이지 이탈, ALB idle timeout, 모바일 네트워크 끊김.
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleClientDisconnect(AsyncRequestNotUsableException e) {
+        log.warn("Client disconnected before response was written: {}", e.getMessage());
+    }
+
+    /**
+     * Jackson 직렬화 단계의 쓰기 실패. 대부분 위와 같은 클라이언트 끊김으로 인한 wrapping.
+     * cause chain 에서 broken pipe / async-not-usable 이면 WARN, 그 외(정말 직렬화 못 함)는 ERROR.
+     */
+    @ExceptionHandler(HttpMessageNotWritableException.class)
+    public void handleMessageNotWritable(HttpMessageNotWritableException e) {
+        if (isClientDisconnect(e)) {
+            log.warn("Client disconnected before response was written");
+        } else {
+            log.error("Failed to serialize response body", e);
+        }
+    }
+
+    private boolean isClientDisconnect(Throwable e) {
+        Throwable cause = e;
+        for (int i = 0; i < 10 && cause != null; i++, cause = cause.getCause()) {
+            if (cause instanceof AsyncRequestNotUsableException) return true;
+            if (cause instanceof IOException) {
+                String msg = cause.getMessage();
+                if (msg != null && (msg.contains("Broken pipe")
+                        || msg.contains("Connection reset"))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @ExceptionHandler(Exception.class)
