@@ -26,6 +26,18 @@ ALTER TABLE users
     DROP COLUMN last_used,
     DROP COLUMN free_used;
 
+-- 자체 로그인 폐지 정리: provider 없이 만들어진 기존 정식 계정(자체 signup 테스트 계정 등)은
+-- Google OAuth 로 재가입해야 하므로 연관 데이터와 함께 삭제한다.
+-- 이 단계가 없으면 아래 CHECK 추가 시, 방금 NULL 로 추가된 provider/provider_id 때문에
+-- 기존 is_guest=false row 가 제약을 위반해 마이그레이션이 실패한다(SQLSTATE 23514).
+-- fresh DB 에선 대상 0건이라 무해하고 멱등하다. FK 자식부터 역순으로 삭제.
+DELETE FROM event_log            WHERE user_id IN (SELECT id FROM users WHERE is_guest = false);
+DELETE FROM correction_feedback  WHERE user_id IN (SELECT id FROM users WHERE is_guest = false);
+DELETE FROM correction_session   WHERE user_id IN (SELECT id FROM users WHERE is_guest = false);
+DELETE FROM user_terms_agreement WHERE user_id IN (SELECT id FROM users WHERE is_guest = false);
+DELETE FROM refresh_tokens       WHERE user_id IN (SELECT id FROM users WHERE is_guest = false);
+DELETE FROM users WHERE is_guest = false;
+
 -- 새 CHECK: 익명=anonymous_token, 정식=email + provider + provider_id + nickname
 ALTER TABLE users
     ADD CONSTRAINT users_kind_check CHECK (
