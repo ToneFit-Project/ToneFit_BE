@@ -66,3 +66,23 @@ amplitude:
   enabled: ${AMPLITUDE_ENABLED:false}
   api-key: ${AMPLITUDE_API_KEY:}
   base-url: https://api2.amplitude.com
+
+# Google OAuth — FE 가 받아온 ID token 의 audience 검증용 client-id whitelist.
+# 운영에선 AwsSecretsManagerEnvironmentInitializer 가 GOOGLE_OAUTH_CLIENT_IDS 환경변수로 주입.
+# (콤마 구분 문자열을 Spring 이 List<String> 으로 자동 바인딩)
+google:
+  oauth:
+    client-ids: ${GOOGLE_OAUTH_CLIENT_IDS:}
+
+# refresh_token 쿠키 Secure 속성. 운영=true / 로컬=false.
+app:
+  cookie:
+    secure: ${COOKIE_SECURE:true}
+
+# 사용자별(계정 단위) AI 호출 한도 (REQ-Limit). 정식 사용자만 적용, 익명/데모 제외.
+# 값은 환경변수(운영은 AWS Secrets Manager)로 주입 — Extension 재배포 없이 조정.
+# 현재 값은 임시 (FUNC-Lim-07 PM 확정 후 교체). correction/generation 각각 독립 카운트.
+limit:
+  user:
+    daily: ${USER_LIMIT_DAILY:100}
+    per-minute: ${USER_LIMIT_PER_MINUTE:10}

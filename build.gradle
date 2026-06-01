@@ -45,6 +45,10 @@ dependencies {
     // Rate limiting (in-memory, 단일 인스턴스 가정. 분산 시 Bucket4j-redis 등으로 교체)
     implementation 'com.bucket4j:bucket4j-core:8.10.1'
     implementation 'com.github.ben-manes.caffeine:caffeine:3.1.8'
+
+    // Google ID token 검증 (Google Identity Services 가 발급한 JWT 의 서명·audience·만료 확인)
+    // BE 는 ID token 의 sub(provider_id)·email 만 사용한다.
+    implementation 'com.google.api-client:google-api-client:2.7.0'
     compileOnly 'org.projectlombok:lombok'
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
     runtimeOnly 'org.postgresql:postgresql'

@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
@@ -17,14 +18,27 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Gemini structured output 기반 교정 클라이언트. v0.5 부터 교정 단일 메서드만 유지.
+ *
+ * <p>구조 교정 / 최종 다듬기 (finalizePolish) / 제목 생성 로직은 제거. 입력은 보호 구간 마커
+ * (⟦…⟧) 로 감싸진 본문 + receiver/purpose. 응답은 changes 배열 (corrected_email 미발화 — 토큰 절감).
+ *
+ * <p>응답 후처리:
+ * <ul>
+ *   <li>각 change 의 original 을 원문에서 indexOf 로 위치 탐색 (cursor 순서 + 공백 무시 fallback)</li>
+ *   <li>보호 구간 침범 시 drop</li>
+ *   <li>마커 문자(⟦/⟧) 응답에 섞여 있을 가능성 차단 차원에서 strip</li>
+ * </ul>
+ */
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "ai.provider", havingValue = "gemini")
 @RequiredArgsConstructor
 public class GeminiAiCorrectionClient implements AiCorrectionClient {
 
-    private static final String START_MARKER = "⟦"; // ⟦
-    private static final String END_MARKER = "⟧";   // ⟧
+    private static final String START_MARKER = "⟦";
+    private static final String END_MARKER = "⟧";
 
     private static final String DEFAULT_CORRECTION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 교정 어시스턴트입니다.
@@ -49,38 +63,6 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
             추가로 개행을 삽입하거나 제거하지 마세요.
             """;
 
-    private static final String DEFAULT_STRUCTURE_SYSTEM_PROMPT = """
-            당신은 한국어 비즈니스 이메일의 구조를 정리하는 어시스턴트입니다.
-            입력된 이메일 본문의 문장 순서를 자연스럽게 재배치하거나, 너무 긴 문장은 분할하고,
-            지나치게 짧은 관련 문장은 결합해 가독성을 높이세요.
-
-            [원칙]
-            - 의미와 정보를 보존하세요. 새로운 내용 추가 금지.
-            - 어휘는 가능한 한 유지하세요. 표현/맞춤법 교정은 별도 단계에서 합니다.
-            - 인사말, 마무리, 핵심 본문의 위치가 비즈니스 이메일 관례에 맞도록 정리하세요.
-
-            [출력 형식]
-            응답은 JSON Schema 로 강제됩니다:
-            { "structure_corrected": "<재구성된 전체 본문>" }
-            """;
-
-    private static final String DEFAULT_FINALIZE_SYSTEM_PROMPT = """
-            당신은 한국어 비즈니스 이메일 다듬기 어시스턴트입니다.
-            수신자 유형과 목적에 맞추어 본문을 매끄럽게 다듬고,
-            ai_final (최종 본문)과 ai_subject (제목)를 반환하세요.
-
-            [보호 구간 규칙]
-            입력 본문에 "⟦" 와 "⟧" 로 감싸진 구간이 있을 수 있습니다.
-            이는 사용자가 직전 단계에서 수락(또는 명시적으로 거절하여 원문 유지를 선택)한 텍스트, 혹은 처음부터 보호로 지정된 구간입니다.
-            - 보호 구간 내부의 어휘/표현은 어떤 이유로도 수정하지 마세요. (재교정·동의어 치환·어조 변경 모두 금지)
-            - 응답 ai_final 안에도 "⟦" "⟧" 마커와 그 안의 내용을 원문 그대로 포함하세요.
-            - 보호 구간 바깥의 연결어, 인사말, 마무리 문구는 자유롭게 다듬어도 됩니다.
-
-            [줄바꿈 규칙]
-            인사말, 본문, 마무리 간의 문단 구분이 유지되도록 적절한 개행을 포함하세요.
-            단, 불필요하게 개행을 중복해서 넣지 마세요.
-            """;
-
     private final RestClient geminiRestClient;
     private final GeminiProperties properties;
     private final ObjectMapper objectMapper;
@@ -101,46 +83,9 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
             throw new IllegalStateException("Failed to parse Gemini correction response: " + json, e);
         }
 
-        String cleanedEmail = restoreFromAi(raw.correctedEmail());
         List<AiCorrectionResult.Change> cleanedChanges = sanitizeChanges(
                 original == null ? "" : original, protectedRanges, raw.changes());
-        return new AiCorrectionResult(cleanedEmail, cleanedChanges);
-    }
-
-    @Override
-    public AiStructureResult correctStructure(String promptContent, Receiver receiver, Purpose purpose,
-                                              String original) {
-        String system = (promptContent == null || promptContent.isBlank())
-                ? DEFAULT_STRUCTURE_SYSTEM_PROMPT : promptContent;
-        String user = buildCorrectionUserMessage(receiver, purpose, original == null ? "" : original);
-        String json = callAndExtract(system, user, structureSchema());
-
-        AiStructureResult raw;
-        try {
-            raw = objectMapper.readValue(json, AiStructureResult.class);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse Gemini structure response: " + json, e);
-        }
-        // 구조 교정도 보호 구간 마커 제거 호환성 차원에서 restore (default prompt 엔 마커 안 쓰지만 PM prompt 따라 다를 수 있음)
-        return new AiStructureResult(restoreFromAi(raw.structureCorrected()));
-    }
-
-    @Override
-    public AiFinalizeResult finalizePolish(String promptContent, Receiver receiver, Purpose purpose,
-                                           String mergedText, List<Range> protectedRanges) {
-        String system = (promptContent == null || promptContent.isBlank())
-                ? DEFAULT_FINALIZE_SYSTEM_PROMPT : promptContent;
-        String prepared = insertMarkers(mergedText == null ? "" : mergedText, protectedRanges);
-        String user = buildFinalizeUserMessage(receiver, purpose, prepared);
-        String json = callAndExtract(system, user, finalizeSchema());
-
-        AiFinalizeResult raw;
-        try {
-            raw = objectMapper.readValue(json, AiFinalizeResult.class);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse Gemini finalize response: " + json, e);
-        }
-        return new AiFinalizeResult(restoreFromAi(raw.aiFinal()), restoreFromAi(raw.aiSubject()));
+        return new AiCorrectionResult(cleanedChanges);
     }
 
     // === 송신 변환 ===
@@ -310,19 +255,21 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         if (text == null || text.isBlank()) {
             throw new IllegalStateException("Gemini response text is empty");
         }
+        logUsage("correction", response.usageMetadata());
         return text;
+    }
+
+    /** FUNC-Lim-07: 초안 1회당 평균 토큰·비용 산출 근거. usageMetadata 를 구조화 로깅. */
+    private void logUsage(String op, GeminiResponse.UsageMetadata usage) {
+        if (usage == null) return;
+        log.info("gemini_usage op={} promptTokens={} candidatesTokens={} totalTokens={}",
+                op, usage.promptTokenCount(), usage.candidatesTokenCount(), usage.totalTokenCount());
     }
 
     private String buildCorrectionUserMessage(Receiver receiver, Purpose purpose, String preparedOriginal) {
         return "[Receiver] " + receiver + '\n'
                 + "[Purpose] " + purpose + '\n'
                 + "[OriginalEmail]\n" + preparedOriginal;
-    }
-
-    private String buildFinalizeUserMessage(Receiver receiver, Purpose purpose, String mergedText) {
-        return "[Receiver] " + receiver + '\n'
-                + "[Purpose] " + purpose + '\n'
-                + "[MergedText]\n" + mergedText;
     }
 
     private Map<String, Object> correctionSchema() {
@@ -355,30 +302,10 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         return root;
     }
 
-    private Map<String, Object> structureSchema() {
-        Map<String, Object> props = new LinkedHashMap<>();
-        props.put("structure_corrected", Map.of("type", "string"));
-
-        Map<String, Object> root = new LinkedHashMap<>();
-        root.put("type", "object");
-        root.put("properties", props);
-        root.put("required", List.of("structure_corrected"));
-        return root;
-    }
-
-    private Map<String, Object> finalizeSchema() {
-        Map<String, Object> props = new LinkedHashMap<>();
-        props.put("ai_final", Map.of("type", "string"));
-        props.put("ai_subject", Map.of("type", "string"));
-
-        Map<String, Object> root = new LinkedHashMap<>();
-        root.put("type", "object");
-        root.put("properties", props);
-        root.put("required", List.of("ai_final", "ai_subject"));
-        return root;
-    }
-
-    private record GeminiResponse(List<Candidate> candidates) {
+    private record GeminiResponse(
+            List<Candidate> candidates,
+            // 전역 Jackson 이 SNAKE_CASE 라 multi-word 키는 명시 매핑 필요 (Gemini 는 camelCase 응답).
+            @JsonProperty("usageMetadata") UsageMetadata usageMetadata) {
         private record Candidate(Content content) {
         }
 
@@ -386,6 +313,12 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         }
 
         private record Part(String text) {
+        }
+
+        private record UsageMetadata(
+                @JsonProperty("promptTokenCount") Integer promptTokenCount,
+                @JsonProperty("candidatesTokenCount") Integer candidatesTokenCount,
+                @JsonProperty("totalTokenCount") Integer totalTokenCount) {
         }
     }
 }

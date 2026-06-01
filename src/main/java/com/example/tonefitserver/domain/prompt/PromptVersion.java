@@ -1,5 +1,6 @@
 package com.example.tonefitserver.domain.prompt;
 
+import com.example.tonefitserver.domain.session.Receiver;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
@@ -9,6 +10,12 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDateTime;
 
+/**
+ * Prompt 버전. v0.5 부터 (purpose, recipient_type) 조합당 활성 1개.
+ *
+ * <p>partial UNIQUE: {@code (purpose, recipient_type) WHERE is_active = true} — V12 마이그레이션.
+ * 전체 UNIQUE: {@code (purpose, recipient_type, version)} — JPA 측에서도 동일하게 선언.
+ */
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -16,8 +23,8 @@ import java.time.LocalDateTime;
 @Table(
         name = "prompt_version",
         uniqueConstraints = @UniqueConstraint(
-                name = "uk_prompt_version_purpose_version",
-                columnNames = {"purpose", "version"}
+                name = "uk_prompt_version_purpose_recipient_version",
+                columnNames = {"purpose", "recipient_type", "version"}
         )
 )
 public class PromptVersion {
@@ -29,6 +36,10 @@ public class PromptVersion {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private PromptPurpose purpose;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "recipient_type", nullable = false)
+    private Receiver recipientType;
 
     @Column(nullable = false)
     private String version;

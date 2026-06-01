@@ -18,3 +18,12 @@ gemini:
 # 로컬 개발 전용 디폴트 — 운영용 키 아님. 문서에도 박혀 있어 외부 노출돼도 무관한 길이용 더미.
 jwt:
   secret: ${JWT_SECRET:dev-only-jwt-secret-do-not-use-in-prod-must-be-at-least-48-bytes-long}
+
+# 로컬 dev 는 HTTP 라 Secure 쿠키 송신 불가 → false.
+# Google OAuth client-id 는 dev 용 별도 발급 권장. 미설정 시 /auth/google 호출 시 audience 검증 실패.
+app:
+  cookie:
+    secure: ${COOKIE_SECURE:false}
+google:
+  oauth:
+    client-ids: ${GOOGLE_OAUTH_CLIENT_IDS:}

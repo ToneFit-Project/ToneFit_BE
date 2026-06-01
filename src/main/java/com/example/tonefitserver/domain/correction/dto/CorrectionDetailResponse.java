@@ -11,18 +11,16 @@ import com.example.tonefitserver.domain.session.Status;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * GET /corrections/{id} 응답. v0.5 부터 subject/aiFinal/aiSubject/userSubject/structureCorrected
+ * 모두 제거 (필드 자체가 사라짐). user_final 은 CONFIRMED 상태에서만 채워짐.
+ */
 public record CorrectionDetailResponse(
         Long sessionId,
         Receiver receiverType,
         Purpose purpose,
-        String subject,
         String originalEmail,
-        /** 구조 교정이 적용된 본문. null 이면 구조 교정 미사용 세션. */
-        String structureCorrected,
-        String aiFinal,
         String userFinal,
-        String aiSubject,
-        String userSubject,
         Status status,
         List<FeedbackItem> feedbacks,
         LocalDateTime createdAt,

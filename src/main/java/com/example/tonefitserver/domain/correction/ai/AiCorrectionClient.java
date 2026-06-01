@@ -6,6 +6,11 @@ import com.example.tonefitserver.domain.session.Receiver;
 
 import java.util.List;
 
+/**
+ * 교정 AI 호출 인터페이스. v0.5 부터 단일 메서드 ({@link #correct}) 만 유지.
+ * 후교정/구조교정 인터페이스는 흐름 자체가 제거돼 사라짐.
+ * (생성 기능은 Phase 3 에서 별도 메서드 또는 별도 client 로 추가)
+ */
 public interface AiCorrectionClient {
 
     AiCorrectionResult correct(String promptContent,
@@ -13,19 +18,4 @@ public interface AiCorrectionClient {
                                Purpose purpose,
                                String original,
                                List<Range> protectedRanges);
-
-    AiFinalizeResult finalizePolish(String promptContent,
-                                    Receiver receiver,
-                                    Purpose purpose,
-                                    String mergedText,
-                                    List<Range> protectedRanges);
-
-    /**
-     * 구조 교정. 본문 구조(문장 순서·결합·분할 등) 변경 결과를 단일 텍스트로 반환.
-     * protected_ranges 는 좌표 의미 잃으므로 받지 않음.
-     */
-    AiStructureResult correctStructure(String promptContent,
-                                       Receiver receiver,
-                                       Purpose purpose,
-                                       String original);
 }
