@@ -1,10 +1,16 @@
 package com.example.tonefitserver.domain.event;
 
+/**
+ * BE 자동 발화 이벤트 종류. v0.5 부터 COMPLETED 제거 (finalize 단계 사라짐).
+ * v0.52 명세 §7.1.
+ *
+ * <p>{@link #GENERATION_STARTED} 는 Phase 3 의 /generations 성공 시 발화.
+ */
 public enum EventType {
     STARTED("CORRECTION_STARTED"),
-    COMPLETED("CORRECTION_COMPLETED"),
     COPIED("CORRECTION_COPIED"),
-    REJECTED("REJECTION_CLICKED");
+    REJECTED("REJECTION_CLICKED"),
+    GENERATION_STARTED("GENERATION_STARTED");
 
     private final String amplitudeName;
 

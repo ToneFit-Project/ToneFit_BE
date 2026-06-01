@@ -10,17 +10,27 @@ public record ApiResponse<T>(
     }
 
     public static ApiResponse<?> error(String code, String message) {
-        return error(code, message, null);
+        return error(code, message, null, null);
     }
 
     public static ApiResponse<?> error(String code, String message, Long sessionId) {
-        return new ApiResponse<>(false, null, new ErrorResponse(code, message, sessionId));
+        return error(code, message, sessionId, null);
     }
 
+    public static ApiResponse<?> error(String code, String message, Long sessionId, Object details) {
+        return new ApiResponse<>(false, null, new ErrorResponse(code, message, sessionId, details));
+    }
+
+    /**
+     * 오류 응답 body. sessionId 와 details 는 case-별 부가 정보로 nullable.
+     * details 의 구조는 ErrorType 별로 정의된다. 예) TERMS_AGREEMENT_REQUIRED →
+     * {@code {"missing_terms": ["SERVICE", "PRIVACY", "ANALYTICS"]}}.
+     */
     public record ErrorResponse(
             String code,
             String message,
-            Long sessionId
+            Long sessionId,
+            Object details
     ) {
     }
 }

@@ -8,8 +8,9 @@ import java.util.regex.Pattern;
  * <p>대상: 사용자 입력으로부터 DB 에 저장 후 history 응답에 그대로 노출되는 텍스트 필드.
  * <ul>
  *   <li>CorrectionRequest: originalEmail</li>
- *   <li>EditRequest / ConfirmRequest: userFinal, userSubject</li>
+ *   <li>ConfirmRequest: userFinal</li>
  *   <li>RejectRequest: reasonText</li>
+ *   <li>GenerationRequest: briefContent (Phase 3)</li>
  * </ul>
  *
  * <p>전제: 한국어 비즈니스 이메일은 평문 가정. 다만 본문에 {@code <3}, {@code <email@x.com>},

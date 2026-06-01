@@ -19,4 +19,10 @@ public class BusinessException extends TonefitException {
     public BusinessException(ErrorType errorType, String message, Long sessionId, Throwable cause) {
         super(errorType, message, sessionId, cause);
     }
+
+    /** case-별 부가 페이로드 부착 (chained). */
+    public BusinessException withDetails(Object details) {
+        assignDetails(details);
+        return this;
+    }
 }

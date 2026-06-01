@@ -5,16 +5,10 @@ import com.example.tonefitserver.domain.correction.dto.ConfirmResponse;
 import com.example.tonefitserver.domain.correction.dto.CorrectionDetailResponse;
 import com.example.tonefitserver.domain.correction.dto.CorrectionRequest;
 import com.example.tonefitserver.domain.correction.dto.CorrectionResponse;
-import com.example.tonefitserver.domain.correction.dto.EditRequest;
-import com.example.tonefitserver.domain.correction.dto.EditResponse;
-import com.example.tonefitserver.domain.correction.dto.FinalizeResponse;
 import com.example.tonefitserver.domain.correction.dto.HistoryResponse;
 import com.example.tonefitserver.domain.correction.dto.InProgressResponse;
-import com.example.tonefitserver.domain.correction.dto.RecorrectRequest;
 import com.example.tonefitserver.domain.correction.dto.RejectRequest;
 import com.example.tonefitserver.domain.correction.dto.RejectResponse;
-import com.example.tonefitserver.domain.correction.dto.StructureCorrectionRequest;
-import com.example.tonefitserver.domain.correction.dto.StructureCorrectionResponse;
 import com.example.tonefitserver.domain.correction.service.CorrectionService;
 import com.example.tonefitserver.domain.session.Purpose;
 import com.example.tonefitserver.domain.session.Receiver;
@@ -24,6 +18,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * v0.52 API 명세 §3. 교정 → (개별 거부) → 확정 3단계로 단순화. 후교정/재교정/구조교정/편집 모두 제거.
+ */
 @RestController
 @RequestMapping("/api/v1/corrections")
 @RequiredArgsConstructor
@@ -38,29 +35,6 @@ public class CorrectionController {
         return correctionService.correct(userId, request);
     }
 
-    /** 선택적 구조 교정 단계. 세션 생성 + 구조 교정만 실행. 후속 1차 교정은 /initial 호출. */
-    @PostMapping("/structure")
-    @ResponseStatus(HttpStatus.CREATED)
-    public StructureCorrectionResponse structureCorrect(@AuthenticationPrincipal Long userId,
-                                                        @Valid @RequestBody StructureCorrectionRequest request) {
-        return correctionService.structureCorrect(userId, request);
-    }
-
-    /** 구조 교정 완료된 세션의 structure_corrected 기반으로 1차 교정 진입. */
-    @PostMapping("/{sessionId}/initial")
-    @ResponseStatus(HttpStatus.CREATED)
-    public CorrectionResponse initialAfterStructure(@AuthenticationPrincipal Long userId,
-                                                    @PathVariable Long sessionId) {
-        return correctionService.initialAfterStructure(userId, sessionId);
-    }
-
-    @PostMapping("/{sessionId}/recorrect")
-    public CorrectionResponse recorrect(@AuthenticationPrincipal Long userId,
-                                        @PathVariable Long sessionId,
-                                        @Valid @RequestBody RecorrectRequest request) {
-        return correctionService.recorrect(userId, sessionId, request);
-    }
-
     @PostMapping("/{sessionId}/reject")
     public RejectResponse rejectFeedback(@AuthenticationPrincipal Long userId,
                                          @PathVariable Long sessionId,
@@ -68,24 +42,11 @@ public class CorrectionController {
         return correctionService.rejectFeedback(userId, sessionId, request);
     }
 
-    @PostMapping("/{sessionId}/finalize")
-    public FinalizeResponse finalizeSession(@AuthenticationPrincipal Long userId,
-                                            @PathVariable Long sessionId) {
-        return correctionService.finalize(userId, sessionId);
-    }
-
-    @PatchMapping("/{sessionId}/edit")
-    public EditResponse editFinal(@AuthenticationPrincipal Long userId,
-                                  @PathVariable Long sessionId,
-                                  @RequestBody EditRequest request) {
-        return correctionService.editFinal(userId, sessionId, request);
-    }
-
     @PostMapping("/{sessionId}/confirm")
-    public ConfirmResponse confirmFinal(@AuthenticationPrincipal Long userId,
-                                        @PathVariable Long sessionId,
-                                        @RequestBody(required = false) ConfirmRequest request) {
-        return correctionService.confirmFinal(userId, sessionId, request);
+    public ConfirmResponse confirm(@AuthenticationPrincipal Long userId,
+                                   @PathVariable Long sessionId,
+                                   @Valid @RequestBody ConfirmRequest request) {
+        return correctionService.confirm(userId, sessionId, request);
     }
 
     @GetMapping("/in-progress")

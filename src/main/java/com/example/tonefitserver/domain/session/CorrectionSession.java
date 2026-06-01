@@ -16,6 +16,15 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 교정 세션. v0.5 부터 흐름이 단순화돼 필드도 정리됨.
+ *
+ * <p>제거: subject / ai_final / ai_subject / user_subject / final_prompt_ver_id /
+ * recorrect_count / structure_corrected. v0.4 컬럼은 V11 마이그레이션에서 drop.
+ *
+ * <p>흐름: POST /corrections (IN_PROGRESS) → 개별 reject 선택 → POST /confirm (CONFIRMED).
+ * confirm 시 user_final 채워지고 미처리 changes 는 일괄 ACCEPTED.
+ */
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -31,21 +40,21 @@ public class CorrectionSession {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    /**
+     * 이 세션이 사용한 교정 prompt 버전. 추후 prompt 변경 후 회귀 분석용.
+     * (Phase 3 에서 PromptPurpose 가 CORRECTION/GENERATION 으로 재정의되면 그쪽 row 참조)
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "initial_prompt_ver_id")
     private PromptVersion initialPromptVersion;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "final_prompt_ver_id")
-    private PromptVersion finalPromptVersion;
-
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private Receiver receiverType;
 
     @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
     private Purpose purpose;
-
-    private String subject;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
@@ -55,31 +64,12 @@ public class CorrectionSession {
     @Column(nullable = false)
     private Status status;
 
-    @Column(columnDefinition = "text")
+    @Column(columnDefinition = "text", nullable = false)
     private String original;
 
-    /**
-     * 구조 교정 단계가 적용된 본문. null 이면 구조 교정 미사용 세션.
-     * 채워지면 이후 AI 호출(initial / recorrect / finalize) 의 입력으로 original 대신 사용됨.
-     */
-    @Column(name = "structure_corrected", columnDefinition = "text")
-    private String structureCorrected;
-
-    @Column(name = "ai_final", columnDefinition = "text")
-    private String aiFinal;
-
+    /** 사용자가 송신한 최종본. confirm 시점에 채워짐. */
     @Column(name = "user_final", columnDefinition = "text")
     private String userFinal;
-
-    @Column(name = "ai_subject")
-    private String aiSubject;
-
-    @Column(name = "user_subject")
-    private String userSubject;
-
-    /** 세션 당 재교정 누적 호출 수. 한도(현재 2회) 초과 시 429 거부. AI 성공 시점에만 증가. */
-    @Column(name = "recorrect_count", nullable = false)
-    private int recorrectCount;
 
     @CreatedDate
     @Column(updatable = false)
@@ -89,15 +79,13 @@ public class CorrectionSession {
     private LocalDateTime updatedAt;
 
     @Builder
-    public CorrectionSession(User user, PromptVersion initialPromptVersion, PromptVersion finalPromptVersion,
-                             Receiver receiverType, Purpose purpose, String subject,
+    public CorrectionSession(User user, PromptVersion initialPromptVersion,
+                             Receiver receiverType, Purpose purpose,
                              List<Range> protectedRanges, Status status, String original) {
         this.user = user;
         this.initialPromptVersion = initialPromptVersion;
-        this.finalPromptVersion = finalPromptVersion;
         this.receiverType = receiverType;
         this.purpose = purpose;
-        this.subject = subject;
         this.protectedRanges = protectedRanges;
         this.status = status;
         this.original = original;
@@ -107,49 +95,13 @@ public class CorrectionSession {
         this.status = status;
     }
 
-    public void updateDraft(Receiver receiverType, Purpose purpose, String original) {
-        this.receiverType = receiverType;
-        this.purpose = purpose;
-        this.original = original;
-    }
-
-    public void updateReceiverPurpose(Receiver receiverType, Purpose purpose) {
-        if (receiverType != null) this.receiverType = receiverType;
-        if (purpose != null) this.purpose = purpose;
-    }
-
-    public void updateProtectedRanges(List<Range> protectedRanges) {
-        this.protectedRanges = protectedRanges;
-    }
-
     public void updateInitialPromptVersion(PromptVersion initialPromptVersion) {
         this.initialPromptVersion = initialPromptVersion;
     }
 
-    public void updateFinalPromptVersion(PromptVersion finalPromptVersion) {
-        this.finalPromptVersion = finalPromptVersion;
-    }
-
-    public void updateAiResult(String aiFinal, String aiSubject) {
-        this.aiFinal = aiFinal;
-        this.aiSubject = aiSubject;
-    }
-
-    public void updateUserEdit(String userFinal, String userSubject) {
-        if (userFinal != null) this.userFinal = userFinal;
-        if (userSubject != null) this.userSubject = userSubject;
-    }
-
-    public void incrementRecorrectCount() {
-        this.recorrectCount++;
-    }
-
-    public void updateStructureCorrected(String structureCorrected) {
-        this.structureCorrected = structureCorrected;
-    }
-
-    /** 이후 AI 호출 입력으로 쓸 텍스트. 구조 교정 적용된 세션이면 structureCorrected, 아니면 original. */
-    public String effectiveOriginal() {
-        return structureCorrected != null ? structureCorrected : original;
+    /** confirm 시점에 사용자가 실제 송신한 본문 저장. */
+    public void confirmWith(String userFinal) {
+        this.userFinal = userFinal;
+        this.status = Status.CONFIRMED;
     }
 }
