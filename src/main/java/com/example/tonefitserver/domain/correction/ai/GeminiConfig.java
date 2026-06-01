@@ -18,8 +18,9 @@ public class GeminiConfig {
     /**
      * Gemini 호출 타임아웃. 무한 대기로 워커가 영구 점유되지 않도록 명시.
      * - connect 5s: TCP 핸드셰이크 시간. 대부분 1초 미만, 5초면 충분
-     * - read 60s: 정상 응답은 보통 8~15초이지만, prompt v4.2d 이후 changes 배열이 길어지면서
-     *   극단 케이스(2,000자 + 이모지·영어·한자 다수)에서 30초 근접·초과 관찰됨. 60초로 상향.
+     * - read 30s: PM 요구사항(FUNC-Ext-10) — AI 호출 30초 타임아웃. 초과 시 호출 중단·타임아웃 오류 반환.
+     *   v0.5 부터 교정은 corrected_email 전문이 빠진 changes 배열만, 생성은 본문만 반환하므로
+     *   출력 토큰이 줄어 30초로 단축 가능. correction/generation 공유.
      *   초과 시 ResourceAccessException 발생 → AI_SERVICE_ERROR 로 매핑됨.
      */
     @Bean
@@ -28,7 +29,7 @@ public class GeminiConfig {
                 .connectTimeout(Duration.ofSeconds(5))
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
-        factory.setReadTimeout(Duration.ofSeconds(60));
+        factory.setReadTimeout(Duration.ofSeconds(30));
 
         return builder
                 .baseUrl(properties.baseUrl())

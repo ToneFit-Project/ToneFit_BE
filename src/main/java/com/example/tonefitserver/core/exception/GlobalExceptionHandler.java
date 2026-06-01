@@ -25,6 +25,9 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    /** USER_RATE_LIMITED 응답에 함께 내리는 Retry-After(초). 분당 한도 기준 60초 안내. */
+    private static final String USER_RATE_LIMIT_RETRY_AFTER = "60";
+
     @ExceptionHandler(TonefitException.class)
     public ResponseEntity<ApiResponse<?>> handleTonefitException(TonefitException e) {
         ErrorType errorType = e.getErrorType();
@@ -35,9 +38,13 @@ public class GlobalExceptionHandler {
             log.warn("Business Exception: {} - {} (sessionId={})",
                     errorType.getCode(), e.getMessage(), e.getSessionId());
         }
-        return ResponseEntity
-                .status(errorType.getStatus())
-                .body(ApiResponse.error(errorType.getCode(), e.getMessage(), e.getSessionId()));
+        ResponseEntity.BodyBuilder builder = ResponseEntity.status(errorType.getStatus());
+        // 계정 단위 한도 초과(FUNC-Lim-04): 일시 제한임을 FE 가 알 수 있도록 Retry-After 동봉.
+        if (errorType == ErrorType.USER_RATE_LIMITED) {
+            builder.header("Retry-After", USER_RATE_LIMIT_RETRY_AFTER);
+        }
+        return builder.body(
+                ApiResponse.error(errorType.getCode(), e.getMessage(), e.getSessionId(), e.getDetails()));
     }
 
     /**
