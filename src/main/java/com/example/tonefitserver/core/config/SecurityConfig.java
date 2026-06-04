@@ -11,6 +11,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
@@ -48,6 +49,9 @@ public class SecurityConfig {
                         "/swagger-ui/**",
                         "/swagger-ui.html"// /test/** 컨트롤러 자체는 prod 프로파일에서 비등록(@Profile)
                 ).permitAll()
+                // 웹 데모 생성: 토큰 없이 호출 가능(익명 토큰 폐지). Extension 은 Bearer 토큰을 보내면
+                // JwtAuthenticationFilter 가 principal 을 채워 정식으로 처리됨. IP rate limit 으로 남용 방어.
+                .requestMatchers(HttpMethod.POST, "/api/v1/generations").permitAll()
                 .anyRequest().authenticated()
             )
             // 토큰 없음·만료·서명 무효 등 인증 실패는 401 + ApiResponse 형식.
@@ -55,7 +59,7 @@ public class SecurityConfig {
             .exceptionHandling(eh -> eh.authenticationEntryPoint(unauthorizedEntryPoint()))
             // 등록 순서 주의: anchor 로 쓸 필터(JwtAuthenticationFilter)를 먼저 등록한 뒤
             // 그것을 anchor 로 하는 필터(RateLimitFilter)를 등록해야 filterOrders 에 인식됨.
-            // RateLimit 이 가장 먼저 실행되어 /auth/anonymous 같은 permitAll 경로에도 적용됨.
+            // RateLimit 이 가장 먼저 실행되어 /generations 같은 permitAll 경로에도 적용됨.
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(rateLimitFilter, JwtAuthenticationFilter.class);
         return http.build();

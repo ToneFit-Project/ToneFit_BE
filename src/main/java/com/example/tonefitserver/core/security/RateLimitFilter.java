@@ -23,14 +23,13 @@ import java.util.List;
  * 단순 in-memory IP 기반 rate limit. 단일 인스턴스 가정.
  * 분산 환경 가면 Redis 기반(Bucket4j ProxyManager) 으로 교체 필요.
  *
- * <p>대상 (v0.52 API 명세 §IP Rate Limit):
+ * <p>대상:
  * <ul>
- *   <li>POST /api/v1/auth/anonymous — 익명 사용자 무한 생성 방지 (FUNC-NON-02)</li>
  *   <li>POST /api/v1/auth/google — Google OAuth 호출 보호</li>
  *   <li>POST /api/v1/corrections — Gemini 호출 비용·쿼터 보호</li>
- *   <li>POST /api/v1/generations — Gemini 호출 비용·쿼터 보호</li>
+ *   <li>POST /api/v1/generations — Gemini 호출 비용·쿼터 보호 (웹 데모 public 호출의 1차 남용 방어)</li>
  * </ul>
- * 모두 분당 10회 / client IP.
+ * 모두 분당 10회 / client IP. (익명 토큰 폐지로 /auth/anonymous 룰 제거)
  *
  * <p>키: client IP (X-Forwarded-For 우선 — ALB 뒤에 있으므로. 없으면 remoteAddr).
  * <p>저장소: Caffeine LRU + TTL eviction (메모리 누수 방지). 최대 100k 키 / 10분 미사용 시 만료.
@@ -42,7 +41,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
 
     private static final List<RateLimitRule> RULES = List.of(
-            new RateLimitRule("POST", "/api/v1/auth/anonymous", 10, Duration.ofMinutes(1)),
             new RateLimitRule("POST", "/api/v1/auth/google", 10, Duration.ofMinutes(1)),
             new RateLimitRule("POST", "/api/v1/corrections", 10, Duration.ofMinutes(1)),
             new RateLimitRule("POST", "/api/v1/generations", 10, Duration.ofMinutes(1))

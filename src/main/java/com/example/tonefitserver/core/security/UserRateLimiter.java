@@ -18,7 +18,7 @@ import java.time.Duration;
  * <ul>
  *   <li>키 = {@code category:userId} — correction/generation 각각 독립 카운트 (FUNC-Lim-03 "같게" = 각 100/10)</li>
  *   <li>두 한도 동시 적용: 하루 {@code daily} 회 + 분당 {@code perMinute} 회 (둘 중 하나라도 소진 시 거부)</li>
- *   <li>익명(데모, REQ-Demo)은 호출하지 않음 — 서비스 계층에서 is_guest 면 skip</li>
+ *   <li>데모(웹, 토큰 없음)는 호출하지 않음 — 서비스 계층에서 userId == null 이면 skip</li>
  *   <li>AI 호출 직전에 차감 → 성공·실패 무관하게 1회 카운트 (FUNC-Lim-06)</li>
  * </ul>
  *

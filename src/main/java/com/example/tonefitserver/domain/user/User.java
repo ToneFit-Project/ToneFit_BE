@@ -92,35 +92,7 @@ public class User {
         return u;
     }
 
-    /** 익명 사용자 생성. anonymousToken 만 채운다. */
-    public static User guest(String anonymousToken) {
-        User u = new User();
-        u.isGuest = true;
-        u.anonymousToken = anonymousToken;
-        u.plan = Plan.FREE;
-        u.status = UserStatus.ACTIVE;
-        u.creditBalance = 0;
-        return u;
-    }
-
     public void deactivate() {
         this.status = UserStatus.INACTIVE;
-    }
-
-    /**
-     * 익명 사용자를 정식 가입자로 승격한다. user.id 는 보존되므로
-     * 모든 FK(correction_session, correction_feedback, event_log)도 그대로 유효하다.
-     * — 별도 데이터 마이그레이션 불필요.
-     */
-    public void promote(String email, String provider, String providerId, String nickname) {
-        if (!this.isGuest) {
-            throw new IllegalStateException("이미 정식 가입된 사용자입니다.");
-        }
-        this.isGuest = false;
-        this.anonymousToken = null;
-        this.email = email;
-        this.provider = provider;
-        this.providerId = providerId;
-        this.nickname = nickname;
     }
 }
