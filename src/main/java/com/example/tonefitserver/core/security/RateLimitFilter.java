@@ -5,6 +5,7 @@ import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import io.github.bucket4j.Bandwidth;
 import io.github.bucket4j.Bucket;
+import io.github.bucket4j.Refill;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,33 +24,41 @@ import java.util.List;
  * 단순 in-memory IP 기반 rate limit. 단일 인스턴스 가정.
  * 분산 환경 가면 Redis 기반(Bucket4j ProxyManager) 으로 교체 필요.
  *
- * <p>대상:
+ * <p>대상 (모두 client IP 당 분당 {@code ratelimit.ip.per-minute} 회):
  * <ul>
  *   <li>POST /api/v1/auth/google — Google OAuth 호출 보호</li>
  *   <li>POST /api/v1/corrections — Gemini 호출 비용·쿼터 보호</li>
- *   <li>POST /api/v1/generations — Gemini 호출 비용·쿼터 보호 (웹 데모 public 호출의 1차 남용 방어)</li>
+ *   <li>POST /api/v1/generations — Gemini 호출 보호 + 웹 데모 public 호출의 1차 남용 방어</li>
  * </ul>
- * 모두 분당 10회 / client IP. (익명 토큰 폐지로 /auth/anonymous 룰 제거)
  *
- * <p>키: client IP (X-Forwarded-For 우선 — ALB 뒤에 있으므로. 없으면 remoteAddr).
- * <p>저장소: Caffeine LRU + TTL eviction (메모리 누수 방지). 최대 100k 키 / 10분 미사용 시 만료.
- * <p>알고리즘: Bucket4j 토큰 버킷. 짧은 burst 허용하되 지속 분당 N회 유지.
+ * <p>한도 값은 {@link RateLimitProperties}(환경변수)로 주입 — 재배포 없이 조정.
+ * <p>키: client IP (X-Forwarded-For 우선 — ALB 뒤. 없으면 remoteAddr).
+ * <p>저장소: Caffeine LRU + TTL eviction. 최대 100k 키 / 10분 미사용 시 만료.
+ * <p>알고리즘: Bucket4j 토큰 버킷 + <b>intervally refill</b> — 1분마다 capacity 를 일괄 보충(중간 보충 없음)
+ *    하므로 "1분 윈도우 내 N회 초과 차단"으로 동작한다. (greedy 보충이면 초기 버스트 + 연속 보충으로
+ *    윈도우 내 최대 ~2N회까지 통과되어 QA 가 혼란스러움 — intervally 로 직관적인 분당 N회를 보장.)
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final AntPathMatcher PATH_MATCHER = new AntPathMatcher();
+    private static final Duration WINDOW = Duration.ofMinutes(1);
 
-    private static final List<RateLimitRule> RULES = List.of(
-            new RateLimitRule("POST", "/api/v1/auth/google", 10, Duration.ofMinutes(1)),
-            new RateLimitRule("POST", "/api/v1/corrections", 10, Duration.ofMinutes(1)),
-            new RateLimitRule("POST", "/api/v1/generations", 10, Duration.ofMinutes(1))
-    );
+    private final List<RateLimitRule> rules;
 
     private final Cache<String, Bucket> buckets = Caffeine.newBuilder()
             .maximumSize(100_000)
             .expireAfterAccess(Duration.ofMinutes(10))
             .build();
+
+    public RateLimitFilter(RateLimitProperties properties) {
+        int perMinute = properties.perMinute();
+        this.rules = List.of(
+                new RateLimitRule("POST", "/api/v1/auth/google", perMinute, WINDOW),
+                new RateLimitRule("POST", "/api/v1/corrections", perMinute, WINDOW),
+                new RateLimitRule("POST", "/api/v1/generations", perMinute, WINDOW)
+        );
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -71,7 +80,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private RateLimitRule matchRule(HttpServletRequest req) {
-        for (RateLimitRule r : RULES) {
+        for (RateLimitRule r : rules) {
             if (r.matches(req)) return r;
         }
         return null;
@@ -87,9 +96,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return req.getRemoteAddr();
     }
 
+    /** intervally refill: period 마다 capacity 일괄 보충. 중간 보충 없음 → 윈도우 내 capacity 초과 차단. */
     private Bucket newBucket(RateLimitRule rule) {
         return Bucket.builder()
-                .addLimit(Bandwidth.simple(rule.capacity(), rule.period()))
+                .addLimit(Bandwidth.classic(rule.capacity(), Refill.intervally(rule.capacity(), rule.period())))
                 .build();
     }
 

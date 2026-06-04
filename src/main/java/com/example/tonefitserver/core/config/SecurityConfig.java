@@ -2,6 +2,7 @@ package com.example.tonefitserver.core.config;
 
 import com.example.tonefitserver.core.security.JwtAuthenticationFilter;
 import com.example.tonefitserver.core.security.RateLimitFilter;
+import com.example.tonefitserver.core.security.RateLimitProperties;
 import com.example.tonefitserver.core.security.UserLimitProperties;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -25,7 +26,7 @@ import java.util.List;
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(UserLimitProperties.class)
+@EnableConfigurationProperties({UserLimitProperties.class, RateLimitProperties.class})
 @RequiredArgsConstructor
 public class SecurityConfig {
 
