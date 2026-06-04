@@ -1,6 +1,5 @@
 package com.example.tonefitserver.domain.auth;
 
-import com.example.tonefitserver.core.dto.auth.AnonymousResponse;
 import com.example.tonefitserver.core.dto.auth.GoogleAuthResponse;
 import com.example.tonefitserver.core.dto.auth.TermsAgreementDto;
 import com.example.tonefitserver.core.dto.auth.TokenResponse;
@@ -26,15 +25,14 @@ import java.security.GeneralSecurityException;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 
 /**
- * 인증 도메인 서비스. v0.5 부터 정식 사용자는 Google OAuth 단일 흐름으로만 진입.
+ * 인증 도메인 서비스. 정식 사용자는 Google OAuth 단일 흐름으로만 진입.
+ * 웹 데모는 토큰 없이 호출하므로 익명 토큰/유저 발급은 제거됨.
  *
  * <p>제공 메서드:
  * <ul>
- *   <li>{@link #anonymous()} — 익명 user 발급 (PRD FR-1.5)</li>
- *   <li>{@link #googleAuth(String, List, Long)} — Google ID token 검증 후 신규/로그인/전환 분기</li>
+ *   <li>{@link #googleAuth(String, List)} — Google ID token 검증 후 신규 가입 / 로그인 분기</li>
  *   <li>{@link #refresh(String)} — refresh token 으로 access token 재발급(rotation)</li>
  *   <li>{@link #logout(Long)} — 서버측 refresh token 삭제 (단일 디바이스 정책으로 row 1개)</li>
  * </ul>
@@ -54,47 +52,21 @@ public class AuthService {
     private final GoogleIdTokenVerifier googleIdTokenVerifier;
 
     /**
-     * 익명 사용자 발급. 가입 없이 URL 진입 직후 FE 가 호출한다 (PRD FR-1.5).
-     * 매 호출마다 새 anonymous_token 으로 새 user 행 생성.
-     */
-    @Transactional
-    public AnonymousResult anonymous() {
-        String anonymousToken = UUID.randomUUID().toString();
-        User user = User.guest(anonymousToken);
-        userRepository.save(user);
-
-        TokenResponse tokens = generateAndSaveTokens(user.getId(), true);
-        AnonymousResponse body = new AnonymousResponse(
-                user.getId(), true, user.getPlan(), anonymousToken, tokens.accessToken());
-        return new AnonymousResult(body, tokens.refreshToken());
-    }
-
-    /**
-     * Google ID token 으로 신규 가입 / 로그인 / 게스트 → 정식 전환을 분기 처리한다.
+     * Google ID token 으로 신규 가입 / 로그인을 분기 처리한다.
      *
-     * <p>분기 규칙 (v0.52 API §1.2 + PM 요구사항 REQ-OAuth/REQ-Agree):
+     * <p>분기 규칙 (PM 요구사항 REQ-OAuth/REQ-Agree):
      * <ul>
-     *   <li>currentUserId == null 인 상태에서 호출
-     *     <ul>
-     *       <li>provider+sub 매칭되는 정식 user 있음 → 로그인 (200)</li>
-     *       <li>없음 → 신규 가입 (201, terms_agreements 필수)</li>
-     *     </ul>
-     *   </li>
-     *   <li>currentUserId != null (익명 access_token 으로 인증)
-     *     <ul>
-     *       <li>해당 user 가 익명이고 provider+sub 가 다른 정식 user 와 충돌 안 함 → in-place 승격 (200, terms_agreements 필수)</li>
-     *       <li>해당 user 가 이미 정식 → INVALID_REQUEST</li>
-     *       <li>provider+sub 가 다른 user 와 매칭 → 기존 정식 user 로 로그인 (200)</li>
-     *     </ul>
-     *   </li>
+     *   <li>provider+sub 매칭되는 정식 user 있음 → 로그인 (200). 단 필수 약관 미보유면 차단(FUNC-Ag-03 #2)</li>
+     *   <li>없음 → 신규 가입 (201, terms_agreements 필수)</li>
      * </ul>
+     *
+     * <p>익명→정식 승격(promotion)은 익명 토큰 폐지로 제거됐다. 웹은 토큰 없이 데모만 쓰고,
+     * Extension 은 처음부터 Google OAuth 로 진입하므로 승격 경로 자체가 없다.
      *
      * <p>nickname 은 Google ID token 의 {@code name} claim 에서 가져온다 (FUNC-Au-02 #2).
      */
     @Transactional
-    public GoogleAuthResult googleAuth(String idTokenString,
-                                       List<TermsAgreementDto> termsAgreements,
-                                       Long currentUserId) {
+    public GoogleAuthResult googleAuth(String idTokenString, List<TermsAgreementDto> termsAgreements) {
         GoogleIdToken.Payload payload = verifyIdToken(idTokenString);
         String providerId = payload.getSubject();
         String email = payload.getEmail();
@@ -103,51 +75,25 @@ public class AuthService {
         }
         String name = extractName(payload, email);
 
-        // 이미 존재하는 정식 user (provider+sub 매칭)
         var existingByProvider = userRepository
                 .findByProviderAndProviderIdAndStatus(PROVIDER_GOOGLE, providerId, UserStatus.ACTIVE);
 
-        // (a) 익명 인증 상태 → in-place 승격 or 기존 정식 로그인
-        if (currentUserId != null) {
-            User current = userRepository.findByIdAndStatus(currentUserId, UserStatus.ACTIVE)
-                    .orElseThrow(() -> new BusinessException(ErrorType.USER_NOT_FOUND));
-
-            if (!current.isGuest()) {
-                throw new BusinessException(ErrorType.INVALID_REQUEST,
-                        "이미 정식 가입된 계정입니다. 로그아웃 후 다시 시도하세요.");
-            }
-
-            if (existingByProvider.isPresent()) {
-                // 익명 토큰을 들고 왔지만 같은 Google 계정으로 이미 정식 user 가 존재.
-                // 익명 user 는 그대로 두고, 기존 정식 user 로 로그인 처리.
-                User existing = existingByProvider.get();
-                TokenResponse tokens = generateAndSaveTokens(existing.getId(), false);
-                return new GoogleAuthResult(toBody(existing, tokens.accessToken()), tokens.refreshToken(), false);
-            }
-
-            // 신규 정식 가입(승격) — 약관 동의 필수.
-            requireTermsAgreement(termsAgreements);
-            current.promote(email, PROVIDER_GOOGLE, providerId, name);
-            saveTermsAgreements(current, termsAgreements);
-            TokenResponse tokens = generateAndSaveTokens(current.getId(), false);
-            return new GoogleAuthResult(toBody(current, tokens.accessToken()), tokens.refreshToken(), true);
-        }
-
-        // (b) 인증 없음 → 기존 정식 로그인 or 신규 정식 가입
+        // 기존 정식 로그인
         if (existingByProvider.isPresent()) {
             User existing = existingByProvider.get();
-            // PM 요구사항 FUNC-Ag-03 #2: 필수 약관 보유 여부 확인.
-            // 미보유면 access_token 없이 차단 — termsAgreements 함께 오면 즉시 동의 처리 후 진행.
+            // FUNC-Ag-03 #2: 필수 약관 보유 여부 확인. 미보유면 access_token 없이 차단 —
+            // termsAgreements 함께 오면 즉시 동의 처리 후 진행.
             enforceRequiredTermsForLogin(existing, termsAgreements);
-            TokenResponse tokens = generateAndSaveTokens(existing.getId(), false);
+            TokenResponse tokens = generateAndSaveTokens(existing.getId());
             return new GoogleAuthResult(toBody(existing, tokens.accessToken()), tokens.refreshToken(), false);
         }
 
+        // 신규 정식 가입
         requireTermsAgreement(termsAgreements);
         User created = User.registered(email, PROVIDER_GOOGLE, providerId, name);
         userRepository.save(created);
         saveTermsAgreements(created, termsAgreements);
-        TokenResponse tokens = generateAndSaveTokens(created.getId(), false);
+        TokenResponse tokens = generateAndSaveTokens(created.getId());
         return new GoogleAuthResult(toBody(created, tokens.accessToken()), tokens.refreshToken(), true);
     }
 
@@ -210,7 +156,7 @@ public class AuthService {
         User user = userRepository.findByIdAndStatus(refreshToken.getUserId(), UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.USER_INACTIVE));
 
-        return generateAndSaveTokens(user.getId(), user.isGuest());
+        return generateAndSaveTokens(user.getId());
     }
 
     /**
@@ -317,9 +263,13 @@ public class AuthService {
         );
     }
 
-    private TokenResponse generateAndSaveTokens(Long userId, boolean isGuest) {
-        String accessToken = jwtTokenProvider.createAccessToken(userId, isGuest);
-        String refreshTokenString = jwtTokenProvider.createRefreshToken(userId, isGuest);
+    /**
+     * access/refresh 토큰 발급 + refresh row upsert. 익명 토큰 폐지로 전부 정식(is_guest=false).
+     * (JWT is_guest claim·refresh 만료 분기는 후속 정리에서 제거 예정 — 현재는 false 고정으로 동작)
+     */
+    private TokenResponse generateAndSaveTokens(Long userId) {
+        String accessToken = jwtTokenProvider.createAccessToken(userId, false);
+        String refreshTokenString = jwtTokenProvider.createRefreshToken(userId, false);
 
         refreshTokenRepository.findByUserId(userId)
                 .ifPresentOrElse(
@@ -327,6 +277,6 @@ public class AuthService {
                         () -> refreshTokenRepository.save(new RefreshToken(refreshTokenString, userId))
                 );
 
-        return new TokenResponse(accessToken, refreshTokenString, isGuest);
+        return new TokenResponse(accessToken, refreshTokenString, false);
     }
 }

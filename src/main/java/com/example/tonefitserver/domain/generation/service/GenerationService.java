@@ -34,11 +34,11 @@ import java.util.Map;
 /**
  * 생성(Generation) 도메인 서비스. v0.52 §4 + PM 요구사항 REQ-Demo / REQ-Limit / REQ-Extension.
  *
- * <p>단일 엔드포인트로 데모(익명)·Extension(정식) 모두 처리하되 다음만 분기 (PM 합의):
+ * <p>단일 엔드포인트로 데모(토큰 없음)·Extension(정식) 모두 처리하되 인증 상태(userId 유무)로만 분기:
  * <ul>
- *   <li>한도: 정식 사용자만 계정 단위 한도 적용 (REQ-Limit). 익명/데모는 미적용</li>
+ *   <li>한도: 정식(userId != null)만 계정 단위 한도 적용 (REQ-Limit). 데모는 미적용</li>
  *   <li>메타데이터: AI_LEARNING 동의자만 90일 보존 (REQ-Ext-11). 그 외는 저장 안 함</li>
- *   <li>측정: is_guest 플래그로 event_log 발화 — Amplitude 측에서 정식/익명 분포 분리</li>
+ *   <li>측정: 정식만 GENERATION_STARTED 발화(BE→Amplitude). 데모는 BE 측정 없음(FE 담당)</li>
  * </ul>
  * 입력·출력·모델·프롬프트는 데모/Extension 공유.
  *
@@ -102,60 +102,57 @@ public class GenerationService {
         long duration = System.currentTimeMillis() - start;
         int resultLength = aiResult.generatedEmail() == null ? 0 : aiResult.generatedEmail().length();
 
-        // AI 성공 — 결과(과금 완료)는 확정. 측정/메타 기록은 best-effort:
-        // 부가 작업(event_log·메타 INSERT)이 인프라 사유로 실패해도 이미 만들어진 결과 반환을 막지 않는다.
-        try {
-            txTemplate.executeWithoutResult(status -> {
-                if (prep.aiLearningConsented()) {
-                    generationMetadataRepository.save(GenerationMetadata.success(
-                            prep.userId(), req.receiverType(), req.purpose(), briefLength, resultLength, duration));
-                }
-                recordEvent(prep.userId(), prep.isGuest(), req);
-            });
-        } catch (Exception e) {
-            log.warn("Generation succeeded but metadata/event recording failed (best-effort): {}", e.toString());
+        // 데모(userId null)는 측정·메타 없음 (BE Amplitude 발화 제거). 정식(Extension)만 기록.
+        // AI 성공 결과(과금 완료)는 확정이므로 기록은 best-effort — 인프라 실패로 결과 반환을 막지 않는다.
+        if (prep.userId() != null) {
+            try {
+                txTemplate.executeWithoutResult(status -> {
+                    if (prep.aiLearningConsented()) {
+                        generationMetadataRepository.save(GenerationMetadata.success(
+                                prep.userId(), req.receiverType(), req.purpose(), briefLength, resultLength, duration));
+                    }
+                    recordEvent(prep.userId(), req);
+                });
+            } catch (Exception e) {
+                log.warn("Generation succeeded but metadata/event recording failed (best-effort): {}", e.toString());
+            }
         }
         return new GenerationResponse(aiResult.generatedSubject(), aiResult.generatedEmail());
     }
 
     private PreparedGeneration prepareGeneration(Long userId, GenerationRequest req) {
-        User user = loadUser(userId);
-        // REQ-Limit: 정식(로그인) 사용자만 계정 단위 한도 적용. 익명(데모)은 미적용.
-        if (!user.isGuest()) {
-            userRateLimiter.consume(UserRateLimiter.CATEGORY_GENERATION, user.getId());
-        }
         PromptVersion prompt = activeGenerationPrompt(req.receiverType());
-        // AI_LEARNING 동의자만 메타데이터 보존 (REQ-Ext-11). 익명은 약관 자체가 없으므로 항상 false.
-        boolean aiLearningConsented = !user.isGuest()
-                && userTermsAgreementRepository.findActiveTypesByUserId(user.getId())
-                        .contains(TermsType.AI_LEARNING);
-        return new PreparedGeneration(
-                user.getId(),
-                prompt != null ? prompt.getContent() : null,
-                aiLearningConsented,
-                user.isGuest()
-        );
+        String content = prompt != null ? prompt.getContent() : null;
+
+        // 웹 데모: 토큰 없음(userId null) → 한도·메타·측정 모두 없음 (REQ-Demo).
+        if (userId == null) {
+            return new PreparedGeneration(null, content, false);
+        }
+
+        // 정식(Extension): 계정 단위 한도 적용 + AI_LEARNING 동의자만 메타 보존.
+        User user = loadUser(userId);
+        userRateLimiter.consume(UserRateLimiter.CATEGORY_GENERATION, user.getId());
+        boolean aiLearningConsented = userTermsAgreementRepository
+                .findActiveTypesByUserId(user.getId())
+                .contains(TermsType.AI_LEARNING);
+        return new PreparedGeneration(user.getId(), content, aiLearningConsented);
     }
 
     /**
-     * GENERATION_STARTED 이벤트 발화. user 는 FK 채우기용 프록시(getReference)로만 사용 —
-     * prepareGeneration(TX1)이 이미 로드·검증했으므로 재조회하지 않는다(중복 쿼리 + 실패 지점 제거).
+     * GENERATION_STARTED 이벤트 발화 (정식 사용자만). user 는 FK 채우기용 프록시(getReference)로만 사용 —
+     * prepareGeneration(TX1)이 이미 로드·검증했으므로 재조회하지 않는다.
      */
-    private void recordEvent(Long userId, boolean isGuest, GenerationRequest req) {
+    private void recordEvent(Long userId, GenerationRequest req) {
         User user = userRepository.getReferenceById(userId);
 
         Map<String, Object> payload = new HashMap<>();
         payload.put("recipient_type", req.receiverType() == null ? null : req.receiverType().name());
         payload.put("purpose", req.purpose() == null ? null : req.purpose().name());
         payload.put("brief_length", req.briefContent() == null ? 0 : req.briefContent().length());
-        payload.put("is_guest", isGuest);
         eventService.record(user, EventType.GENERATION_STARTED, null, payload);
     }
 
     private User loadUser(Long userId) {
-        if (userId == null) {
-            throw new BusinessException(ErrorType.UNAUTHORIZED);
-        }
         return userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.UNAUTHORIZED));
     }
@@ -166,8 +163,10 @@ public class GenerationService {
                 .orElse(null);
     }
 
-    /** TX1 → AI 호출 → TX2 사이 entity detach 회피를 위한 값 객체 스냅샷. */
-    private record PreparedGeneration(Long userId, String promptContent,
-                                      boolean aiLearningConsented, boolean isGuest) {
+    /**
+     * TX1 → AI 호출 → TX2 사이 entity detach 회피를 위한 값 객체 스냅샷.
+     * userId == null 이면 웹 데모(한도·메타·측정 없음), non-null 이면 정식(Extension).
+     */
+    private record PreparedGeneration(Long userId, String promptContent, boolean aiLearningConsented) {
     }
 }
