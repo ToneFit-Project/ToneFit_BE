@@ -86,3 +86,9 @@ limit:
   user:
     daily: ${USER_LIMIT_DAILY:100}
     per-minute: ${USER_LIMIT_PER_MINUTE:10}
+
+# IP 단위 요청 빈도 제한 (분당). client IP 당 /auth/google·/corrections·/generations 각각 적용.
+# 환경변수로 조정 — 재배포 없이 QA·튜닝. intervally refill 이라 "1분 윈도우 내 N회 초과 차단".
+ratelimit:
+  ip:
+    per-minute: ${IP_RATE_LIMIT_PER_MINUTE:10}
