@@ -60,6 +60,10 @@ public class AwsSecretsManagerEnvironmentInitializer
             properties.put("jwt.secret", app.get("JWT_SECRET").asText());
             properties.put("gemini.api-key", app.get("GEMINI_API_KEY").asText());
             properties.put("gemini.model", app.get("GEMINI_MODEL").asText());
+            // Google OAuth audience(client_id) whitelist — ID token 검증용. 콤마 구분 다중 허용.
+            if (app.hasNonNull("GOOGLE_OAUTH_CLIENT_IDS")) {
+                properties.put("google.oauth.client-ids", app.get("GOOGLE_OAUTH_CLIENT_IDS").asText());
+            }
             // Amplitude 미러링 — 운영에서 활성화 (선택)
             if (app.hasNonNull("AMPLITUDE_API_KEY")) {
                 properties.put("amplitude.api-key", app.get("AMPLITUDE_API_KEY").asText());
