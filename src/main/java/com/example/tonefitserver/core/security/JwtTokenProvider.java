@@ -31,17 +31,12 @@ public class JwtTokenProvider {
     public static final String CLAIM_IS_GUEST = "is_guest";
     public static final String CLAIM_TYPE = "type";
     public static final String TYPE_ACCESS = "access";
-    public static final String TYPE_REFRESH = "refresh";
 
     @Value("${jwt.secret}")
     private String secretKeyString;
 
     @Value("${jwt.expiration}")
     private long accessValidityInMilliseconds;
-
-    /** Refresh token 만료. PM 요구사항 FUNC-Co-07/08: 익명 7일 / 정식 30일. */
-    private static final long REFRESH_GUEST_MILLIS = 7L * 24 * 60 * 60 * 1000;
-    private static final long REFRESH_USER_MILLIS = 30L * 24 * 60 * 60 * 1000;
 
     private SecretKey key;
 
@@ -53,16 +48,6 @@ public class JwtTokenProvider {
     public String createAccessToken(Long userId, boolean isGuest) {
         return createToken(String.valueOf(userId), accessValidityInMilliseconds,
                 Map.of(CLAIM_IS_GUEST, isGuest, CLAIM_TYPE, TYPE_ACCESS));
-    }
-
-    public String createRefreshToken(Long userId, boolean isGuest) {
-        return createToken(String.valueOf(userId), refreshValidityMillis(isGuest),
-                Map.of(CLAIM_IS_GUEST, isGuest, CLAIM_TYPE, TYPE_REFRESH));
-    }
-
-    /** refresh token 만료 — 익명/정식 분기. cookie Max-Age 도 같은 값을 써야 한다. */
-    public static long refreshValidityMillis(boolean isGuest) {
-        return isGuest ? REFRESH_GUEST_MILLIS : REFRESH_USER_MILLIS;
     }
 
     private String createToken(String subject, long validityInMilliseconds, Map<String, Object> claims) {
