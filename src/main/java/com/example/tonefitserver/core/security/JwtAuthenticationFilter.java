@@ -20,7 +20,7 @@ import java.util.Collections;
 /**
  * Authorization: Bearer <jwt> 헤더를 검증하고 SecurityContext 에 인증 정보를 채운다.
  *
- * <p>principal 로는 user.id (Long) 을 설정하고, is_guest 플래그는 details 에 넣어둔다.
+ * <p>principal 로는 user.id (Long) 을 설정한다.
  * 컨트롤러에서는 {@code @AuthenticationPrincipal Long userId} 로 받는다.
  */
 @Component
@@ -40,11 +40,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             // access token 만 인증 컨텍스트로 인정. refresh token 으로 API 직접 호출 차단.
             // type claim 없는 옛 토큰도 거부 — 재로그인 필요.
             Long userId = jwtTokenProvider.getUserId(token);
-            boolean isGuest = jwtTokenProvider.getIsGuest(token);
-
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(userId, null, Collections.emptyList());
-            authentication.setDetails(isGuest);
             SecurityContextHolder.getContext().setAuthentication(authentication);
         }
 

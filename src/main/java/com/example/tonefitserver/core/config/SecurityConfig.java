@@ -79,10 +79,12 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of(
+        // allowCredentials(true) + 와일드카드 패턴은 setAllowedOrigins 로 불가 → setAllowedOriginPatterns 사용.
+        config.setAllowedOriginPatterns(List.of(
                 "https://tonefit-six.vercel.app",
                 "http://localhost:8080",
-                "https://tonefit.kr"
+                "https://tonefit.kr",
+                "chrome-extension://*"   // Extension — 운영 ID 확정 시 고정 origin 으로 좁히기 권장
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));

@@ -83,7 +83,6 @@ public class UserService {
     private UserResponse toUserResponse(User user) {
         return new UserResponse(
                 user.getId(),
-                user.isGuest(),
                 user.getEmail(),
                 user.getNickname(),
                 user.getProvider(),

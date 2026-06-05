@@ -111,11 +111,9 @@ public class CorrectionService {
 
     private AiCorrectionInput prepareCorrection(Long userId, CorrectionRequest req) {
         User user = loadUser(userId);
-        // REQ-Limit: 정식(로그인) 사용자만 계정 단위 한도 적용. 익명(데모/체험)은 미적용.
+        // REQ-Limit: correction 은 인증 필수(정식만)이므로 계정 단위 한도를 항상 적용.
         // AI 호출 직전(세션 생성 전)에 차감 → 성공·실패 무관 1회 카운트 (FUNC-Lim-06).
-        if (!user.isGuest()) {
-            userRateLimiter.consume(UserRateLimiter.CATEGORY_CORRECTION, user.getId());
-        }
+        userRateLimiter.consume(UserRateLimiter.CATEGORY_CORRECTION, user.getId());
         CorrectionSession session = CorrectionSession.builder()
                 .user(user)
                 .receiverType(req.receiverType())

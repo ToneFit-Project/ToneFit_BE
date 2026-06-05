@@ -13,7 +13,6 @@ import java.time.LocalDateTime;
  */
 public record UserResponse(
         Long userId,
-        boolean isGuest,
         String email,
         String nickname,
         String provider,
