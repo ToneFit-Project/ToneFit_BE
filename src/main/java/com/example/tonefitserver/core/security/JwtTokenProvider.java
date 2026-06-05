@@ -16,19 +16,13 @@ import java.util.Map;
 /**
  * JWT 발급/검증.
  *
- * <p>토큰 구조:
- * <ul>
- *   <li>subject = user.id (정식/익명 무관, 문자열로 직렬화)</li>
- *   <li>claim "is_guest" = 익명 사용자 여부 boolean</li>
- * </ul>
- * 이렇게 통일하면 정식과 익명을 같은 인증 흐름에서 처리할 수 있고,
- * principal_id 가 익명·가입 동일 키라는 PRD 정의와도 정합한다.
+ * <p>토큰 구조: subject = user.id, claim {@code type=access}.
+ * 익명·refresh 폐지로 access token 만 발급한다.
  */
 @Slf4j
 @Component
 public class JwtTokenProvider {
 
-    public static final String CLAIM_IS_GUEST = "is_guest";
     public static final String CLAIM_TYPE = "type";
     public static final String TYPE_ACCESS = "access";
 
@@ -45,9 +39,9 @@ public class JwtTokenProvider {
         this.key = Keys.hmacShaKeyFor(secretKeyString.getBytes(StandardCharsets.UTF_8));
     }
 
-    public String createAccessToken(Long userId, boolean isGuest) {
+    public String createAccessToken(Long userId) {
         return createToken(String.valueOf(userId), accessValidityInMilliseconds,
-                Map.of(CLAIM_IS_GUEST, isGuest, CLAIM_TYPE, TYPE_ACCESS));
+                Map.of(CLAIM_TYPE, TYPE_ACCESS));
     }
 
     private String createToken(String subject, long validityInMilliseconds, Map<String, Object> claims) {
@@ -67,12 +61,7 @@ public class JwtTokenProvider {
         return Long.parseLong(getClaims(token).getSubject());
     }
 
-    public boolean getIsGuest(String token) {
-        Object v = getClaims(token).get(CLAIM_IS_GUEST);
-        return v instanceof Boolean b && b;
-    }
-
-    /** 토큰 종류 — access / refresh. claim 없으면 null. */
+    /** 토큰 종류 — access. claim 없으면 null. */
     public String getType(String token) {
         Object v = getClaims(token).get(CLAIM_TYPE);
         return v == null ? null : v.toString();

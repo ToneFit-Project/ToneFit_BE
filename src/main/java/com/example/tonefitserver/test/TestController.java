@@ -35,9 +35,8 @@ public class TestController {
     }
 
     @GetMapping("/token")
-    public ApiResponse<String> testToken(@RequestParam(defaultValue = "1") Long userId,
-                                         @RequestParam(defaultValue = "false") boolean isGuest) {
-        return ApiResponse.success(jwtTokenProvider.createAccessToken(userId, isGuest));
+    public ApiResponse<String> testToken(@RequestParam(defaultValue = "1") Long userId) {
+        return ApiResponse.success(jwtTokenProvider.createAccessToken(userId));
     }
 
     @GetMapping("/secure")

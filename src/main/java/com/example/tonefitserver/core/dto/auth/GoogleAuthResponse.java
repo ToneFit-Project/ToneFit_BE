@@ -13,7 +13,6 @@ public record GoogleAuthResponse(
         String email,
         String nickname,
         String provider,
-        boolean isGuest,
         Plan plan,
         int creditBalance,
         String accessToken

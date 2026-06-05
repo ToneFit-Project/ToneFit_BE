@@ -126,9 +126,9 @@ public class AuthService {
     // 내부 헬퍼
     // -----------------------------------------------------------------------
 
-    /** access token 발급 (stateless). 익명 토큰 폐지로 전부 정식(is_guest=false). */
+    /** access token 발급 (stateless). 모든 user 는 정식. */
     private String issueAccessToken(Long userId) {
-        return jwtTokenProvider.createAccessToken(userId, false);
+        return jwtTokenProvider.createAccessToken(userId);
     }
 
     private GoogleIdToken.Payload verifyIdToken(String idTokenString) {
@@ -213,7 +213,6 @@ public class AuthService {
                 user.getEmail(),
                 user.getNickname(),
                 user.getProvider(),
-                user.isGuest(),
                 user.getPlan(),
                 user.getCreditBalance(),
                 accessToken

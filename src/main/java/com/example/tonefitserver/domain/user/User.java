@@ -13,19 +13,10 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDateTime;
 
 /**
- * 사용자 엔티티. v0.5 스키마 기준.
+ * 사용자 엔티티. 정식 사용자(Google OAuth)만 존재한다.
  *
- * <p>익명(is_guest=true) 과 정식(is_guest=false) 둘 다 같은 테이블로 관리한다.
- * 정식 사용자는 Google OAuth(향후 다른 provider 확장) 단일 흐름으로만 가입한다.
- * <ul>
- *   <li>익명: anonymous_token 만 채움</li>
- *   <li>정식: email + provider + provider_id + nickname 모두 채움
- *       (nickname 은 Google 프로필 표시 이름 — PM 요구사항 FUNC-Au-02 #2)</li>
- * </ul>
- * DB 측 CHECK constraint 가 둘 중 하나의 형태만 허용한다.
- *
- * <p>생성(Generation) 무료 한도(free_used) 는 PM 결정으로 BE 미관리 →
- * 컬럼·필드·증가 메서드 모두 제거. FE 가 localStorage 로 카운트한다.
+ * <p>익명 토큰/유저 폐지로 {@code is_guest}·{@code anonymous_token} 컬럼은 제거됨(V16).
+ * 모든 user 는 email + provider + provider_id + nickname 을 가진다.
  */
 @Entity
 @Table(name = "users")
@@ -38,24 +29,18 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "is_guest", nullable = false)
-    private boolean isGuest;
-
-    @Column(name = "anonymous_token", unique = true)
-    private String anonymousToken;
-
     @Column(unique = true)
     private String email;
 
-    /** OAuth provider 식별자. 정식 사용자만 채워진다. (예: {@code "GOOGLE"}) */
+    /** OAuth provider 식별자. (예: {@code "GOOGLE"}) */
     @Column(length = 16)
     private String provider;
 
-    /** provider 의 stable user id. Google 의 경우 {@code sub} claim. 정식 사용자만. */
+    /** provider 의 stable user id. Google 의 경우 {@code sub} claim. */
     @Column(name = "provider_id")
     private String providerId;
 
-    /** Google 프로필의 표시 이름. 정식 사용자만 채워진다. */
+    /** Google 프로필의 표시 이름. */
     @Column(length = 64)
     private String nickname;
 
@@ -81,7 +66,6 @@ public class User {
     /** 정식 가입자 생성 — OAuth provider 정보 + nickname 필수. */
     public static User registered(String email, String provider, String providerId, String nickname) {
         User u = new User();
-        u.isGuest = false;
         u.email = email;
         u.provider = provider;
         u.providerId = providerId;
