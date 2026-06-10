@@ -1,6 +1,6 @@
 package com.example.tonefitserver.domain.prompt;
 
-import com.example.tonefitserver.domain.session.Receiver;
+import com.example.tonefitserver.core.enums.Receiver;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;

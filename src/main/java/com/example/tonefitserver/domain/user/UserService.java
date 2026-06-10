@@ -5,6 +5,7 @@ import com.example.tonefitserver.core.enums.ErrorType;
 import com.example.tonefitserver.core.enums.TermsType;
 import com.example.tonefitserver.core.enums.UserStatus;
 import com.example.tonefitserver.core.exception.BusinessException;
+import com.example.tonefitserver.domain.correction.repository.RejectedCorrectionRepository;
 import com.example.tonefitserver.domain.generation.GenerationMetadataRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,7 @@ public class UserService {
     private final UserRepository userRepository;
     private final UserTermsAgreementRepository userTermsAgreementRepository;
     private final GenerationMetadataRepository generationMetadataRepository;
+    private final RejectedCorrectionRepository rejectedCorrectionRepository;
 
     public UserResponse getMe(Long userId) {
         User user = userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
@@ -69,12 +71,13 @@ public class UserService {
                         "철회할 활성 동의 기록이 없습니다.");
             }
             active.forEach(UserTermsAgreement::revoke);
-            // REQ-Ext-11 #4: AI 학습 활용 동의 철회 시 기 수집 메타데이터 즉시 파기.
+            // REQ-Ext-11 #4 / FUNC-Cor-06: AI 학습 활용 동의 철회 시 기 수집 데이터 즉시 파기.
             if (type == TermsType.AI_LEARNING) {
-                int purged = generationMetadataRepository.deleteByUserId(userId);
-                if (purged > 0) {
-                    log.info("AI_LEARNING revoked: purged {} generation_metadata rows for user {}",
-                            purged, userId);
+                int purgedMeta = generationMetadataRepository.deleteByUserId(userId);
+                int purgedReject = rejectedCorrectionRepository.deleteByUserId(userId);
+                if (purgedMeta > 0 || purgedReject > 0) {
+                    log.info("AI_LEARNING revoked for user {}: purged {} generation_metadata, {} rejected_correction rows",
+                            userId, purgedMeta, purgedReject);
                 }
             }
         }

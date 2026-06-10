@@ -1,8 +1,8 @@
 package com.example.tonefitserver.domain.correction.ai;
 
-import com.example.tonefitserver.domain.session.Purpose;
-import com.example.tonefitserver.domain.session.Range;
-import com.example.tonefitserver.domain.session.Receiver;
+import com.example.tonefitserver.core.enums.Purpose;
+import com.example.tonefitserver.core.enums.Receiver;
+import com.example.tonefitserver.domain.correction.model.Range;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 

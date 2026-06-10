@@ -1,8 +1,8 @@
 package com.example.tonefitserver.domain.generation.ai;
 
 import com.example.tonefitserver.domain.correction.ai.GeminiProperties;
-import com.example.tonefitserver.domain.session.Purpose;
-import com.example.tonefitserver.domain.session.Receiver;
+import com.example.tonefitserver.core.enums.Purpose;
+import com.example.tonefitserver.core.enums.Receiver;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
