@@ -1,7 +1,7 @@
 package com.example.tonefitserver.domain.generation;
 
-import com.example.tonefitserver.domain.session.Purpose;
-import com.example.tonefitserver.domain.session.Receiver;
+import com.example.tonefitserver.core.enums.Purpose;
+import com.example.tonefitserver.core.enums.Receiver;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;

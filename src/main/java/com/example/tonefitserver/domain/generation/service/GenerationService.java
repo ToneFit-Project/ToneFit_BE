@@ -17,7 +17,7 @@ import com.example.tonefitserver.domain.generation.dto.GenerationResponse;
 import com.example.tonefitserver.domain.prompt.PromptPurpose;
 import com.example.tonefitserver.domain.prompt.PromptVersion;
 import com.example.tonefitserver.domain.prompt.PromptVersionRepository;
-import com.example.tonefitserver.domain.session.Receiver;
+import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.domain.user.User;
 import com.example.tonefitserver.domain.user.UserRepository;
 import com.example.tonefitserver.domain.user.UserTermsAgreementRepository;
@@ -149,7 +149,7 @@ public class GenerationService {
         payload.put("recipient_type", req.receiverType() == null ? null : req.receiverType().name());
         payload.put("purpose", req.purpose() == null ? null : req.purpose().name());
         payload.put("brief_length", req.briefContent() == null ? 0 : req.briefContent().length());
-        eventService.record(user, EventType.GENERATION_STARTED, null, payload);
+        eventService.record(user, EventType.GENERATION_STARTED, payload);
     }
 
     private User loadUser(Long userId) {

@@ -1,7 +1,7 @@
 package com.example.tonefitserver.domain.generation.dto;
 
-import com.example.tonefitserver.domain.session.Purpose;
-import com.example.tonefitserver.domain.session.Receiver;
+import com.example.tonefitserver.core.enums.Purpose;
+import com.example.tonefitserver.core.enums.Receiver;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;

@@ -15,7 +15,6 @@ public record EventLogPersisted(
         Long userId,
         EventType eventType,
         String visitSessionId,
-        Long sessionId,
         Map<String, Object> properties,
         LocalDateTime createdAt
 ) {

@@ -1,6 +1,5 @@
 package com.example.tonefitserver.domain.event;
 
-import com.example.tonefitserver.domain.session.CorrectionSession;
 import com.example.tonefitserver.domain.user.User;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -40,10 +39,6 @@ public class EventLog {
     @Column(name = "visit_session_id", nullable = false)
     private String visitSessionId;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "session_id")
-    private CorrectionSession session;
-
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
     private Map<String, Object> properties;
@@ -54,13 +49,11 @@ public class EventLog {
 
     @Builder
     public EventLog(String clientEventId, User user, EventType eventType,
-                    String visitSessionId, CorrectionSession session,
-                    Map<String, Object> properties) {
+                    String visitSessionId, Map<String, Object> properties) {
         this.clientEventId = clientEventId;
         this.user = user;
         this.eventType = eventType;
         this.visitSessionId = visitSessionId;
-        this.session = session;
         this.properties = properties;
     }
 }

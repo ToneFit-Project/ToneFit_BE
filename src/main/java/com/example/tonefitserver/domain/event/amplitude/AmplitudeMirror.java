@@ -79,9 +79,6 @@ public class AmplitudeMirror {
         Map<String, Object> eventProperties = event.properties() == null
                 ? new HashMap<>() : new HashMap<>(event.properties());
         eventProperties.put("visit_session_id", event.visitSessionId());
-        if (event.sessionId() != null) {
-            eventProperties.put("correction_session_id", event.sessionId());
-        }
         ev.put("event_properties", eventProperties);
 
         Map<String, Object> body = new LinkedHashMap<>();
