@@ -1,5 +1,6 @@
 package com.example.tonefitserver.domain.user;
 
+import com.example.tonefitserver.core.dto.user.TermsStatusResponse;
 import com.example.tonefitserver.core.dto.user.UserResponse;
 import com.example.tonefitserver.core.enums.ErrorType;
 import com.example.tonefitserver.core.enums.TermsType;
@@ -12,7 +13,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -29,6 +34,37 @@ public class UserService {
         User user = userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.USER_NOT_FOUND));
         return toUserResponse(user);
+    }
+
+    /**
+     * 약관 동의 현황 조회 — 5종 전체를 항상 반환 (기록 없는 타입은 agreed=false).
+     *
+     * <p>agreed 판정은 {@link #toggleTerms} 와 동일하게 <b>버전 무관 활성</b>
+     * (agreed=true AND revoked_at IS NULL). 약관 버전업 과도기에 활성 row 가 여러 버전이면
+     * 최신 agreed_at 의 row 를 표시한다.
+     */
+    public TermsStatusResponse getTerms(Long userId) {
+        userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
+                .orElseThrow(() -> new BusinessException(ErrorType.USER_NOT_FOUND));
+
+        Map<TermsType, UserTermsAgreement> activeByType = userTermsAgreementRepository
+                .findByUserId(userId).stream()
+                .filter(UserTermsAgreement::isActive)
+                .collect(Collectors.toMap(UserTermsAgreement::getType, Function.identity(),
+                        (a, b) -> a.getAgreedAt().isAfter(b.getAgreedAt()) ? a : b));
+
+        List<TermsStatusResponse.Item> items = Arrays.stream(TermsType.values())
+                .map(type -> {
+                    UserTermsAgreement active = activeByType.get(type);
+                    return new TermsStatusResponse.Item(
+                            type,
+                            type.isRequired(),
+                            active != null,
+                            active == null ? null : active.getVersion(),
+                            active == null ? null : active.getAgreedAt());
+                })
+                .toList();
+        return new TermsStatusResponse(items);
     }
 
     /**
