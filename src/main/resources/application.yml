@@ -60,6 +60,9 @@ ai:
 gemini:
   api-key: ${GEMINI_API_KEY:}
   model: gemini-3-flash-preview
+  # 회신 요약·파악·점검 보조 단계용 저가 모델 (FUNC-Rep-15). 비우면 model 로 fallback.
+  # 실제 모델 ID 는 PM 확정 후 지정 (운영은 AWS Secrets Manager GEMINI_LITE_MODEL).
+  light-model: ${GEMINI_LITE_MODEL:}
   base-url: https://generativelanguage.googleapis.com/v1beta
 
 amplitude:
@@ -92,3 +95,8 @@ limit:
 ratelimit:
   ip:
     per-minute: ${IP_RATE_LIMIT_PER_MINUTE:10}
+
+# 회신 작성+점검 구간 시간 예산 (FUNC-Rep-12 — 60초 목표 중 ② 구간. ① 파악은 Gemini 30초 타임아웃).
+# 예산 내에서 작성→점검→(실패 시) 1회 재작성. 모자라면 재작성 없이 첫 초안 반환.
+reply:
+  draft-budget-seconds: ${REPLY_DRAFT_BUDGET_SECONDS:40}
