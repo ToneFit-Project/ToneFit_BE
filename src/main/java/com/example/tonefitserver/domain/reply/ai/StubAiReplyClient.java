@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * 로컬·테스트용 stub. 대화는 그대로 echo, 수신자 추측은 DIRECT_SUPERVISOR 고정,
- * 질문은 더미 1개 — FE 가 입력 화면(R-01) 흐름을 끝까지 태울 수 있게.
+ * 질문은 더미 1개 — FE 가 입력 화면(R-01) 흐름을 끝까지 태울 수 있게. 점검은 항상 통과.
  */
 @Component
 @ConditionalOnProperty(name = "ai.provider", havingValue = "stub", matchIfMissing = true)
@@ -27,13 +27,21 @@ public class StubAiReplyClient implements AiReplyClient {
 
     @Override
     public AiReplyDraftResult draft(String promptContent, Receiver receiver, String conversation,
-                                    List<QuestionAnswer> questionAnswers, String freeInput) {
+                                    List<QuestionAnswer> questionAnswers, String freeInput,
+                                    List<String> revisionNotes) {
         String firstAnswer = questionAnswers.isEmpty()
                 ? (freeInput == null ? "" : freeInput)
-                : questionAnswers.get(0).answer();
+                : (questionAnswers.get(0).answer() == null ? "" : questionAnswers.get(0).answer());
         return new AiReplyDraftResult(
                 "[테스트] 회신: " + (receiver == null ? "메일" : receiver.name()),
                 "안녕하세요.\n\n" + firstAnswer + "\n\n감사합니다."
         );
+    }
+
+    @Override
+    public AiReplyInspection inspect(Receiver receiver, String conversation,
+                                     List<QuestionAnswer> questionAnswers, String freeInput,
+                                     AiReplyDraftResult draft) {
+        return new AiReplyInspection(true, List.of());
     }
 }

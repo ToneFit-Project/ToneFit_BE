@@ -60,6 +60,10 @@ public class AwsSecretsManagerEnvironmentInitializer
             properties.put("jwt.secret", app.get("JWT_SECRET").asText());
             properties.put("gemini.api-key", app.get("GEMINI_API_KEY").asText());
             properties.put("gemini.model", app.get("GEMINI_MODEL").asText());
+            // 회신 보조 단계(요약·파악·점검)용 저가 모델 — 없으면 gemini.model 로 fallback (FUNC-Rep-15)
+            if (app.hasNonNull("GEMINI_LITE_MODEL")) {
+                properties.put("gemini.light-model", app.get("GEMINI_LITE_MODEL").asText());
+            }
             // Google OAuth audience(client_id) whitelist — ID token 검증용. 콤마 구분 다중 허용.
             if (app.hasNonNull("GOOGLE_OAUTH_CLIENT_IDS")) {
                 properties.put("google.oauth.client-ids", app.get("GOOGLE_OAUTH_CLIENT_IDS").asText());
