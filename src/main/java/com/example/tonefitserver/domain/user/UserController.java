@@ -1,6 +1,7 @@
 package com.example.tonefitserver.domain.user;
 
 import com.example.tonefitserver.core.dto.ApiResponse;
+import com.example.tonefitserver.core.dto.user.TermsStatusResponse;
 import com.example.tonefitserver.core.dto.user.UserResponse;
 import com.example.tonefitserver.core.enums.TermsType;
 import jakarta.validation.constraints.NotNull;
@@ -22,6 +23,15 @@ public class UserController {
     @GetMapping("/me")
     public ApiResponse<UserResponse> getMe(@AuthenticationPrincipal Long userId) {
         return ApiResponse.success(userService.getMe(userId));
+    }
+
+    /**
+     * 약관 동의 현황 — 설정 화면용. PATCH /me/terms/{type} 의 조회 짝.
+     * 5종 전체를 항상 반환 (기록 없는 타입은 agreed=false).
+     */
+    @GetMapping("/me/terms")
+    public ApiResponse<TermsStatusResponse> getTerms(@AuthenticationPrincipal Long userId) {
+        return ApiResponse.success(userService.getTerms(userId));
     }
 
     /**
