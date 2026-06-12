@@ -56,7 +56,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
         this.rules = List.of(
                 new RateLimitRule("POST", "/api/v1/auth/google", perMinute, WINDOW),
                 new RateLimitRule("POST", "/api/v1/corrections", perMinute, WINDOW),
-                new RateLimitRule("POST", "/api/v1/generations", perMinute, WINDOW)
+                new RateLimitRule("POST", "/api/v1/generations", perMinute, WINDOW),
+                // 회신 — 인증 필수 경로라 계정 한도(분당 3회)가 1차 방어. IP 룰은 무인증 스프레이 등 2차 방어.
+                new RateLimitRule("POST", "/api/v1/replies", perMinute, WINDOW),
+                new RateLimitRule("POST", "/api/v1/replies/analysis", perMinute, WINDOW)
         );
     }
 

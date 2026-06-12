@@ -2,9 +2,11 @@ package com.example.tonefitserver.domain.reply.service;
 
 import com.example.tonefitserver.core.enums.ErrorType;
 import com.example.tonefitserver.core.enums.Receiver;
+import com.example.tonefitserver.core.enums.TermsType;
 import com.example.tonefitserver.core.enums.UserStatus;
 import com.example.tonefitserver.core.exception.BusinessException;
 import com.example.tonefitserver.core.security.TextSanitizer;
+import com.example.tonefitserver.core.security.UserRateLimiter;
 import com.example.tonefitserver.domain.prompt.PromptPurpose;
 import com.example.tonefitserver.domain.prompt.PromptVersion;
 import com.example.tonefitserver.domain.prompt.PromptVersionRepository;
@@ -20,6 +22,7 @@ import com.example.tonefitserver.domain.reply.dto.ReplyDraftResponse;
 import com.example.tonefitserver.domain.reply.support.MailCleaner;
 import com.example.tonefitserver.domain.user.User;
 import com.example.tonefitserver.domain.user.UserRepository;
+import com.example.tonefitserver.domain.user.UserTermsAgreementRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -43,8 +46,11 @@ import java.util.stream.Collectors;
  * 받은 메일은 제3자 글 — 본문·보낸 사람 정보를 로그에도 남기지 않는다.
  * 점검 issue 의 detail 도 내용이 섞일 수 있어 재작성 프롬프트로만 쓰고 로그엔 type 만.
  *
- * <p>결정 대기 후 부착: 계정 한도 차감 시점, "받은 메일 읽기" 동의 게이트(FUNC-Ag-08).
- * Phase C: reply 메타데이터·이벤트, 에러 세분화(FUNC-Rep-14 — 한국어 감지·길이 초과 구분 등).
+ * <p>게이트 (v0.57, PM 확정): 킬스위치({@code reply.enabled}, FUNC-Lim-10) → MAIL_READ 동의(FUNC-Ag-08,
+ * 회신만 차단) → 계정 한도(일일 합산 1회는 파악 호출에서 차감, 작성은 분당 가드만) →
+ * 정리 후 본문 합산 20,000자 초과 시 CONTENT_TOO_LONG.
+ *
+ * <p>Phase C: reply 메타데이터·이벤트, 잔여 에러 세분화(한국어 감지 등), 비용 경보.
  */
 @Slf4j
 @Service
@@ -57,21 +63,39 @@ public class ReplyService {
     /** 인용에서 복원한 이전 대화 블록 라벨 — 파악 모델에 출처를 알린다. */
     private static final String RECOVERED_LABEL = "[이전 대화 — 최신 메일 인용에서 복원]";
 
+    /** "너무 김" 기준 — 정리(인용·서명 제거) 후 대화 본문 합산 글자 수 (PM 확정, FUNC-Rep-14). */
+    private static final int CONVERSATION_MAX_CHARS = 20_000;
+
     private final UserRepository userRepository;
+    private final UserTermsAgreementRepository userTermsAgreementRepository;
     private final PromptVersionRepository promptVersionRepository;
     private final AiReplyClient aiClient;
     private final ReplyProperties replyProperties;
+    private final UserRateLimiter userRateLimiter;
 
     // ===== 파악 호출 =====
 
     public ReplyAnalysisResponse analyze(Long userId, ReplyAnalysisRequest req) {
-        loadUser(userId);
+        ensureReplyEnabled();
+        User user = loadUser(userId);
+        requireMailReadConsent(user.getId());
 
         // ① 기계 정리 (FUNC-Rep-04): 인용·서명 제거 + 미중복 trail 복원. 의미 파악은 AI 몫.
         List<String> rawBodies = req.mails().stream()
                 .map(m -> TextSanitizer.sanitize(m.body()))
                 .toList();
         MailCleaner.CleanResult cleaned = MailCleaner.clean(rawBodies);
+
+        // "너무 김" 검증 (PM 확정): 정리 후 본문 합산 20,000자 초과 → 구분 응답.
+        // 한도 차감보다 먼저 — 검증 실패는 AI 호출이 아니므로 카운트하지 않는다 (FUNC-Lim-06).
+        int totalChars = cleaned.mails().stream().mapToInt(String::length).sum();
+        if (totalChars > CONVERSATION_MAX_CHARS) {
+            throw new BusinessException(ErrorType.CONTENT_TOO_LONG,
+                    "정리 후 대화 본문 합산이 20,000자를 초과했습니다.");
+        }
+
+        // 회신 1번 = 일일(합산) 1회 — 파악 호출 시점 차감 (PM 확정). 분당 한도도 함께.
+        userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
         List<String> mailBodies = new ArrayList<>();
         if (!cleaned.recoveredContext().isEmpty()) {
@@ -108,7 +132,11 @@ public class ReplyService {
     // ===== 작성 호출 =====
 
     public ReplyDraftResponse draft(Long userId, ReplyDraftRequest req) {
-        loadUser(userId);
+        ensureReplyEnabled();
+        User user = loadUser(userId);
+        requireMailReadConsent(user.getId());
+        // 일일 1회는 파악 호출에서 이미 차감 — 작성은 분당 가드만 (무상태라 직접 반복 호출 가능하므로).
+        userRateLimiter.consumeMinuteOnly(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
         List<AiReplyClient.QuestionAnswer> qas = pairQuestionAnswers(req);
         PromptVersion prompt = activeReplyPrompt(req.receiverType());
@@ -239,6 +267,30 @@ public class ReplyService {
         }
         return userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.UNAUTHORIZED));
+    }
+
+    /** FUNC-Lim-10 수동 킬스위치 — 비용 위험선 접근 시 회신만 차단 (생성·교정 유지). */
+    private void ensureReplyEnabled() {
+        if (!replyProperties.enabled()) {
+            throw new BusinessException(ErrorType.REPLY_SUSPENDED);
+        }
+    }
+
+    /**
+     * "받은 메일 읽기" 동의 게이트 (FUNC-Ag-08). 회신은 받은 메일(제3자 글)을 읽으므로
+     * MAIL_READ 활성 동의 없이는 차단 — 회신 최초 사용 시 FE 가 동의를 받아
+     * {@code PATCH /users/me/terms/MAIL_READ} 로 기록한 뒤 재호출한다.
+     * 응답은 로그인 약관 차단과 동일 형식: TERMS_AGREEMENT_REQUIRED + missing_terms.
+     */
+    private void requireMailReadConsent(Long userId) {
+        boolean consented = userTermsAgreementRepository
+                .findActiveTypesByUserId(userId)
+                .contains(TermsType.MAIL_READ);
+        if (!consented) {
+            throw new BusinessException(ErrorType.TERMS_AGREEMENT_REQUIRED,
+                    "받은 메일 읽기 동의가 필요합니다.")
+                    .withDetails(Map.of("missing_terms", List.of(TermsType.MAIL_READ.name())));
+        }
     }
 
     /**

@@ -84,11 +84,13 @@ app:
 
 # 사용자별(계정 단위) AI 호출 한도 (REQ-Limit). 정식 사용자만 적용, 익명/데모 제외.
 # 값은 환경변수(운영은 AWS Secrets Manager)로 주입 — Extension 재배포 없이 조정.
-# 현재 값은 임시 (FUNC-Lim-07 PM 확정 후 교체). correction/generation 각각 독립 카운트.
+# daily 는 교정·생성·회신 3기능 합산 (FUNC-Lim-08 PM 확정). 분당은 카테고리별 독립 —
+# 회신은 1회 비용이 커서 따로 더 낮게 (FUNC-Lim-09, PM 확정 3회. 값은 임시 조정 가능).
 limit:
   user:
     daily: ${USER_LIMIT_DAILY:100}
     per-minute: ${USER_LIMIT_PER_MINUTE:10}
+    reply-per-minute: ${USER_REPLY_LIMIT_PER_MINUTE:3}
 
 # IP 단위 요청 빈도 제한 (분당). client IP 당 /auth/google·/corrections·/generations 각각 적용.
 # 환경변수로 조정 — 재배포 없이 QA·튜닝. intervally refill 이라 "1분 윈도우 내 N회 초과 차단".
@@ -96,7 +98,11 @@ ratelimit:
   ip:
     per-minute: ${IP_RATE_LIMIT_PER_MINUTE:10}
 
-# 회신 작성+점검 구간 시간 예산 (FUNC-Rep-12 — 60초 목표 중 ② 구간. ① 파악은 Gemini 30초 타임아웃).
-# 예산 내에서 작성→점검→(실패 시) 1회 재작성. 모자라면 재작성 없이 첫 초안 반환.
+# 회신 설정.
+# enabled: FUNC-Lim-10 수동 킬스위치 — 전체 비용이 위험선에 가까워지면 false 로 내려 회신만 차단
+#   (생성·교정 유지). 위험선이 데이터 기반으로 정의될 때까지 수동 운영 (PM 확정).
+# draft-budget-seconds: FUNC-Rep-12 — 60초 목표 중 ② 작성+점검 구간 예산 (① 파악은 Gemini 30초 타임아웃).
+#   예산 내에서 작성→점검→(실패 시) 1회 재작성. 모자라면 재작성 없이 첫 초안 반환.
 reply:
+  enabled: ${REPLY_ENABLED:true}
   draft-budget-seconds: ${REPLY_DRAFT_BUDGET_SECONDS:40}

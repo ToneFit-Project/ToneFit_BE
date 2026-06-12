@@ -21,6 +21,10 @@ public enum ErrorType {
     RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "RATE_LIMITED", "요청 빈도가 너무 높습니다. 잠시 후 다시 시도해주세요."),
     // REQ-Limit FUNC-Lim-04: 계정 잠금이 아닌 일시 제한. IP 단위(RATE_LIMITED)와 구분되는 계정 단위 한도.
     USER_RATE_LIMITED(HttpStatus.TOO_MANY_REQUESTS, "USER_RATE_LIMITED", "사용 한도를 초과했습니다. 잠시 후 다시 시도해주세요."),
+    // FUNC-Rep-14: "너무 김" 구분 응답 — 정리(인용·서명 제거) 후 대화 본문 합산 20,000자 초과 (PM 확정)
+    CONTENT_TOO_LONG(HttpStatus.BAD_REQUEST, "CONTENT_TOO_LONG", "대화 내용이 너무 깁니다."),
+    // FUNC-Lim-10: 전체 비용 보호 — 회신 기능만 수동 차단 (생성·교정은 유지)
+    REPLY_SUSPENDED(HttpStatus.SERVICE_UNAVAILABLE, "REPLY_SUSPENDED", "회신 기능이 일시 중단되었습니다. 잠시 후 다시 시도해주세요."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "서버 내부 오류"),
     AI_SERVICE_ERROR(HttpStatus.BAD_GATEWAY, "AI_SERVICE_ERROR", "Gemini API 호출 실패");
 
