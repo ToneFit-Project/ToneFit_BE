@@ -33,7 +33,19 @@ public class UserService {
     public UserResponse getMe(Long userId) {
         User user = userRepository.findByIdAndStatus(userId, UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.USER_NOT_FOUND));
-        return toUserResponse(user);
+        // 선택 약관 2건(MARKETING/AI_LEARNING) 활성 여부 — getTerms 와 동일 기준(버전 무관 활성).
+        List<TermsType> activeTypes = userTermsAgreementRepository.findActiveTypesByUserId(userId);
+        return new UserResponse(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getProvider(),
+                user.getPlan(),
+                user.getCreditBalance(),
+                activeTypes.contains(TermsType.MARKETING),
+                activeTypes.contains(TermsType.AI_LEARNING),
+                user.getCreatedAt()
+        );
     }
 
     /**
@@ -119,15 +131,4 @@ public class UserService {
         }
     }
 
-    private UserResponse toUserResponse(User user) {
-        return new UserResponse(
-                user.getId(),
-                user.getEmail(),
-                user.getNickname(),
-                user.getProvider(),
-                user.getPlan(),
-                user.getCreditBalance(),
-                user.getCreatedAt()
-        );
-    }
 }
