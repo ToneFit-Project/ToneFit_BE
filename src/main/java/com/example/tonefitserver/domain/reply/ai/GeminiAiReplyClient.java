@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -17,12 +18,10 @@ import java.util.Map;
 /**
  * Gemini 기반 회신 클라이언트. 교정·생성 client 와 같은 RestClient·GeminiProperties 공유.
  *
- * <p>모델 분담 (FUNC-Rep-15): 작성({@link #draft})은 메인 모델, 요약·파악({@link #analyze})과
- * 점검({@link #inspect})은 저가 모델({@code gemini.light-model}, 미설정 시 메인으로 fallback).
- * API 키는 하나 — 모델은 호출 경로 파라미터.
+ * <p>모델 분담 (FUNC-Rep-15): 작성({@link #draft})은 메인 모델, 요약·파악·점검은 저가 모델
+ * ({@code gemini.light-model}, 미설정 시 메인 fallback). API 키는 하나 — 모델은 경로 파라미터.
  *
- * <p>요약 정책 (FUNC-Rep-04): 이전 메일 합이 임계 초과일 때만 이전 대화를 요약하고
- * <b>답장 대상(마지막) 메일은 항상 원문 보존</b> — 지어내기 점검(FUNC-Rep-08)의 근거가 되므로.
+ * <p>요약·파악·점검 prompt 는 수신자 무관이라 코드 상수. 작성 prompt 만 DB(REPLY×recipient, V20).
  */
 @Slf4j
 @Component
@@ -30,84 +29,103 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class GeminiAiReplyClient implements AiReplyClient {
 
-    /** 이전 메일(답장 대상 제외) 합계가 이 길이를 넘으면 요약 요청. */
-    private static final int SUMMARY_THRESHOLD_CHARS = 2_000;
-
-    private static final String DEFAULT_ANALYZE_SYSTEM_PROMPT = """
-            당신은 한국어 비즈니스 이메일 회신을 준비하는 분석 어시스턴트입니다.
-            받은 메일 대화를 읽고 아래 항목만 정리하세요. 회신 본문을 작성하지 마세요.
-            대화에 없는 내용을 추가하지 마세요.
-
-            1. previous_summary: [지시]에 요약이 필요하다고 명시된 경우에만, 답장 대상(마지막) 메일을
-               제외한 이전 대화를 핵심만 간결하게 요약하세요. 요약 불필요 지시면 빈 문자열 "".
-            2. receiver_type: 답장을 받게 될 상대의 유형 추측 —
-               DIRECT_SUPERVISOR(직속 상사) / OTHER_DEPT_COLLEAGUE(타부서 동료) /
-               EXTERNAL_PARTNER(외부 협력사) / CLIENT(고객사).
-               기준은 답장 대상 메일을 보낸 사람입니다. 단 To/CC 에 더 윗사람이나 외부 상대가
-               있으면 그쪽에 맞춰 더 격식 있는 유형으로 올리고, 내리지는 마세요.
-               본인 주소·단체 메일·발신전용(noreply) 주소는 판단에서 제외하세요.
-            3. questions: 답장에서 답해야 할 질문·요청 목록. 답장 대상 메일에서 뽑되 각 항목은
-               한 문장으로. 답할 것이 없으면 빈 배열.
-            """;
-
-    private static final String DEFAULT_DRAFT_SYSTEM_PROMPT = """
-            당신은 한국어 비즈니스 이메일 회신을 작성해주는 어시스턴트입니다.
-            받은 메일 대화(정리·요약본)와 사용자가 질문별로 적은 답변을 바탕으로
-            회신 제목(generated_subject)과 본문(generated_email)을 작성하세요.
-
-            [원칙]
-            - 비즈니스 한국어. 간결·정중·명확.
-            - 수신자 유형에 맞는 호칭과 어조를 사용하세요.
-            - 답장의 입장(수락/거절/추가 정보 요청/보류·검토/확인 등)은 사용자의 질문별 답변에서 읽어
-              톤과 뼈대를 정하세요. 한 회신에 질문마다 입장이 다를 수 있습니다.
-            - 답변이 비거나 모호하면 수락·거절을 멋대로 정하지 말고
-              중립("확인했습니다 / 검토 후 회신드리겠습니다")으로 쓰세요.
-
-            [지어내기 금지]
-            - 받은 메일 대화에 없는 사실·일정·약속을 만들어내지 마세요.
-            - 못 읽은 첨부파일·링크 내용을 아는 척하지 마세요.
-
-            [출력 형식]
-            응답은 JSON Schema 로 강제됩니다:
-            { "generated_subject": "<제목>", "generated_email": "<본문>" }
-            """;
-
-    private static final String DEFAULT_INSPECT_SYSTEM_PROMPT = """
-            당신은 한국어 비즈니스 이메일 회신 초안의 검수자입니다.
-            초안을 고치지 말고 평가만 하세요. 다음 세 가지를 점검합니다.
-
-            1. 완답성: 질문 목록의 각 질문에 초안이 답했는지.
-               답하지 않은 질문이 있으면 type=UNANSWERED_QUESTION, question_id 에 해당 질문 id.
-            2. 지어내기: 대화·사용자 답변에 없는 사실·일정·약속이 초안에 있으면 type=FABRICATION.
-            3. 격식·방향·형식: 수신자 유형 대비 격식(높임말 수위) 불일치는 FORMALITY_MISMATCH,
-               사용자 답변의 입장(수락/거절 등)과 초안 톤 불일치는 STANCE_MISMATCH,
-               이메일 형식 문제는 FORMAT.
-
-            - 문제가 없으면 passed=true, issues 는 빈 배열.
-            - detail 에는 무엇이 왜 부족한지 한 줄 (예: "2번 질문에 답하지 않음").
-            - question_id 는 UNANSWERED_QUESTION 일 때만 해당 질문 id, 그 외에는 0.
-            - 사소한 표현 차이는 문제 삼지 마세요. 회신 품질을 실제로 해치는 문제만 지적하세요.
-            """;
-
     private final RestClient geminiRestClient;
     private final GeminiProperties properties;
     private final ObjectMapper objectMapper;
 
-    // ===== ②요약+③파악 (light) =====
+    // ===== ② 요약 (light) =====
+
+    private static final String SUMMARIZE_SYSTEM_PROMPT = """
+            당신은 한국어 비즈니스 이메일 대화를 간추리는 요약 전문가입니다.
+            회신을 준비하는 사용자가 이전 대화 맥락을 빠르게 읽도록 긴 메일을 짧게 줄입니다.
+            요약만 합니다. 회신을 쓰거나 의견을 더하지 않습니다.
+
+            [규칙]
+            1. 메일당 3문장 이내.
+            2. 있는 내용만 줄입니다. 새 사실·해석·평가·추측을 더하지 않습니다.
+            3. 다음은 반드시 보존: 날짜·기한·금액·수량 등 모든 수치 / 질문·요청·결정 사항 /
+               고유명사(회사·제품·프로젝트·사람 이름).
+            4. 인사·안부·서명 등 내용 없는 부분은 버립니다.
+            5. 이메일 주소·전화번호는 옮기지 않습니다(이름·호칭만).
+            6. 원문에 없는 존칭·어체 변환을 하지 않습니다. 중립 서술체로 적습니다.
+            """;
 
     @Override
-    public AiReplyAnalysisResult analyze(String promptContent, List<String> mailBodies,
-                                         List<String> to, List<String> cc) {
-        String system = (promptContent == null || promptContent.isBlank())
-                ? DEFAULT_ANALYZE_SYSTEM_PROMPT : promptContent;
+    public List<String> summarize(List<String> mailBodies) {
+        if (mailBodies == null || mailBodies.isEmpty()) return List.of();
+        StringBuilder user = new StringBuilder("--- 요약할 메일 (오래된 것부터) ---\n");
+        for (int i = 0; i < mailBodies.size(); i++) {
+            user.append('[').append(i + 1).append("] 본문:\n").append(mailBodies.get(i)).append('\n');
+        }
+        user.append("--- 끝 ---");
 
-        List<String> previous = mailBodies.subList(0, mailBodies.size() - 1);
-        boolean needSummary = previous.stream().mapToInt(String::length).sum() > SUMMARY_THRESHOLD_CHARS;
+        String json = callAndExtract("reply_summarize", properties.lightModelOrDefault(),
+                SUMMARIZE_SYSTEM_PROMPT, user.toString(), summarizeSchema());
+        SummarizeOut out;
+        try {
+            out = objectMapper.readValue(json, SummarizeOut.class);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to parse Gemini reply summarize response: " + json, e);
+        }
+        // order 로 정렬 후 입력 길이에 맞춰 정렬·보정 (누락분은 원문 유지).
+        String[] result = new String[mailBodies.size()];
+        if (out.summaries() != null) {
+            for (SummarizeOut.Item it : out.summaries()) {
+                int idx = (it.order() == null ? 0 : it.order()) - 1;
+                if (idx >= 0 && idx < result.length) result[idx] = it.summary();
+            }
+        }
+        List<String> list = new ArrayList<>(mailBodies.size());
+        for (int i = 0; i < mailBodies.size(); i++) {
+            list.add(result[i] != null ? result[i] : mailBodies.get(i));
+        }
+        return list;
+    }
 
-        String user = buildAnalyzeUserMessage(mailBodies, to, cc, needSummary);
+    // ===== ③ 파악 (light) =====
+
+    private static final String ANALYZE_SYSTEM_PROMPT = """
+            당신은 한국어 비즈니스 이메일 회신을 준비하는 분석가입니다.
+            받은 메일 대화를 읽고 두 가지만 파악합니다 — ① 받는 사람 유형 추측 ② 답해야 할 질문·요청 목록.
+            회신 본문을 쓰지 않고, 대화를 요약·재작성하지 않습니다.
+
+            [작업 0 — 사전 점검 (가장 먼저)]
+            - 대화가 비었거나 본문을 읽을 수 없으면 status="EMPTY_THREAD" 로 즉시 종료(recipient·questions 무의미).
+            - 본문이 대부분 한국어가 아니면 status="NOT_KOREAN" 으로 종료(영어 전용 메일이 대표 예).
+              한국어 문장에 영어 용어·고유명사가 섞인 것은 정상이며 해당하지 않습니다.
+            - 그 외 status="OK".
+
+            [작업 1 — 받는 사람 유형 추측] RCP-01 상사 / RCP-02 동료 / RCP-03 고객사 / RCP-04 협력사.
+            1. 기준 인물 = 답장 대상 메일 발신자.
+            2. 나와 도메인이 같으면 내부(상사·동료), 다르면 외부(고객사·협력사). 모르면 호칭·어체·내용으로.
+            3. 내부: 직책 호칭 + 지시·승인·피드백 위치면 상사, 대등하면 동료.
+            4. 외부: 우리가 납품·서비스 제공하거나 상대가 발주·구매 결정권이면 고객사, 대등 협업이면 협력사.
+               애매하면 고객사(격식 높은 쪽 안전).
+            5. To/CC 상향: 기준 인물보다 격식 필요한 상대가 있으면 그 기준으로 올림(상향만, 하향 없음).
+            6. 나 자신·단체메일·발신전용(noreply)은 판단에서 제외.
+            confidence: high(직책 호칭·귀사/발주 등 관계 표현이 본문/도메인에서 확인될 때만) /
+            mid(내부외부는 확실하나 관계 표현 없음) / low(신호 부족·발신전용·단체). reason 은 근거 한 줄.
+
+            [작업 2 — 답할 질문·요청 추출]
+            - 마지막 메일 중심, 사용자가 답해야 할 것. 이전 메일 질문도 답이 안 오갔으면 포함.
+            - 포함: 명시 질문, 요청·부탁(확인·검토·승인·회신·자료·일정), 선택 요구, 기한 동의 여부.
+            - 제외: 인사치레, 단순 정보 공유, 이미 답한 것, 다른 수신자 지목 질문, 단순 첨부 참고 안내.
+            - 각 항목은 짧게 답할 수 있는 형태로. 원문 기한·수치·명칭은 보존. 7개 이내(중요 순).
+            - mail_order 는 그 질문이 나온 메일 번호. 답할 것 없으면 빈 배열. 없는 질문을 만들지 않음.
+            """;
+
+    @Override
+    public AiReplyAnalysisResult analyze(AnalyzeInput in) {
+        StringBuilder user = new StringBuilder();
+        user.append("나: ").append(blankToNone(in.meIdentity())).append('\n');
+        user.append("답장 대상: ").append(blankToNone(in.replyTargetSender())).append('\n');
+        user.append("받는 사람(To): ").append(joinOrNone(in.to()))
+            .append(" / 참조(CC): ").append(joinOrNone(in.cc())).append('\n');
+        user.append("--- 받은 메일 대화 (오래된 것부터, 최근 3건 이내) ---\n")
+            .append(in.conversation()).append("\n--- 대화 끝 ---");
+
         String json = callAndExtract("reply_analyze", properties.lightModelOrDefault(),
-                system, user, analyzeSchema());
-
+                ANALYZE_SYSTEM_PROMPT, user.toString(), analyzeSchema());
         AnalyzeOut out;
         try {
             out = objectMapper.readValue(json, AnalyzeOut.class);
@@ -115,51 +133,45 @@ public class GeminiAiReplyClient implements AiReplyClient {
             throw new IllegalStateException("Failed to parse Gemini reply analysis response: " + json, e);
         }
 
-        // 답장 대상 메일은 항상 원문 보존 — 요약된 경우에만 이전 대화를 요약본으로 대체.
-        String conversation;
-        if (needSummary && out.previousSummary() != null && !out.previousSummary().isBlank()) {
-            conversation = "[이전 대화 요약]\n" + out.previousSummary().strip()
-                    + "\n\n[답장 대상 메일]\n" + mailBodies.get(mailBodies.size() - 1);
-        } else {
-            conversation = joinLabeled(mailBodies);
+        AiReplyAnalysisResult.Status status = parseStatus(out.status());
+        if (status != AiReplyAnalysisResult.Status.OK) {
+            return new AiReplyAnalysisResult(status, null, List.of());
         }
-        return new AiReplyAnalysisResult(conversation, out.receiverType(),
-                out.questions() == null ? List.of() : out.questions());
-    }
 
-    private String buildAnalyzeUserMessage(List<String> mailBodies, List<String> to, List<String> cc,
-                                           boolean needSummary) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("[To] ").append(to == null || to.isEmpty() ? "(없음)" : String.join(", ", to)).append('\n');
-        sb.append("[Cc] ").append(cc == null || cc.isEmpty() ? "(없음)" : String.join(", ", cc)).append('\n');
-        sb.append("[지시] ").append(needSummary
-                ? "이전 대화가 깁니다. previous_summary 에 이전 대화 요약을 채우세요."
-                : "대화가 짧습니다. previous_summary 는 빈 문자열로 두세요.").append('\n');
-        sb.append("[대화 — 시간순, 마지막이 답장 대상]\n").append(joinLabeled(mailBodies));
-        return sb.toString();
-    }
-
-    private String joinLabeled(List<String> mailBodies) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < mailBodies.size(); i++) {
-            boolean last = i == mailBodies.size() - 1;
-            sb.append("[메일 ").append(i + 1).append(last ? " — 답장 대상]" : "]").append('\n')
-              .append(mailBodies.get(i)).append('\n');
+        AiReplyAnalysisResult.Recipient recipient = null;
+        if (out.recipient() != null) {
+            recipient = new AiReplyAnalysisResult.Recipient(
+                    rcpToReceiver(out.recipient().type()),
+                    out.recipient().label(),
+                    out.recipient().confidence(),
+                    out.recipient().reason());
         }
-        return sb.toString();
+        List<AiReplyAnalysisResult.Question> questions = new ArrayList<>();
+        if (out.questions() != null) {
+            for (AnalyzeOut.QuestionOut q : out.questions()) {
+                questions.add(new AiReplyAnalysisResult.Question(
+                        q.question(), q.mailOrder() == null ? 0 : q.mailOrder()));
+            }
+        }
+        return new AiReplyAnalysisResult(status, recipient, questions);
     }
 
-    // ===== ⑤작성 (main) =====
+    // ===== ⑤ 작성 (main) =====
+
+    private static final String DEFAULT_DRAFT_SYSTEM_PROMPT = """
+            당신은 한국어 비즈니스 이메일 회신을 작성하는 전문가입니다.
+            받은 메일 대화와 사용자의 질문별 답변을 바탕으로 회신 제목·본문을 작성합니다.
+            입장(수락/거절 등)은 사용자 답변에서 읽고, 답변이 비거나 모호하면 중립으로 씁니다.
+            대화·답변에 없는 사실·일정·금액·약속을 지어내지 않습니다.
+            응답은 JSON Schema 로 강제됩니다: { "generated_subject": "...", "generated_email": "..." }
+            """;
 
     @Override
-    public AiReplyDraftResult draft(String promptContent, Receiver receiver, String conversation,
-                                    List<QuestionAnswer> questionAnswers, String freeInput,
-                                    List<String> revisionNotes) {
-        String system = (promptContent == null || promptContent.isBlank())
-                ? DEFAULT_DRAFT_SYSTEM_PROMPT : promptContent;
-        String user = buildDraftUserMessage(receiver, conversation, questionAnswers, freeInput, revisionNotes);
-        String json = callAndExtract("reply_draft", properties.model(), system, user, draftSchema());
-
+    public AiReplyDraftResult draft(DraftInput in) {
+        String system = (in.promptContent() == null || in.promptContent().isBlank())
+                ? DEFAULT_DRAFT_SYSTEM_PROMPT : in.promptContent();
+        String json = callAndExtract("reply_draft", properties.model(),
+                system, buildDraftUserMessage(in), draftSchema());
         try {
             return objectMapper.readValue(json, AiReplyDraftResult.class);
         } catch (Exception e) {
@@ -167,43 +179,70 @@ public class GeminiAiReplyClient implements AiReplyClient {
         }
     }
 
-    private String buildDraftUserMessage(Receiver receiver, String conversation,
-                                         List<QuestionAnswer> questionAnswers, String freeInput,
-                                         List<String> revisionNotes) {
+    private String buildDraftUserMessage(DraftInput in) {
         StringBuilder sb = new StringBuilder();
-        sb.append("[Receiver] ").append(receiver).append('\n');
-        sb.append("[Conversation]\n").append(conversation).append('\n');
-        sb.append(formatQuestionAnswers(questionAnswers));
-        if (freeInput != null && !freeInput.isBlank()) {
-            sb.append("[사용자 자유 입력]\n").append(freeInput).append('\n');
-        }
-        if (revisionNotes != null && !revisionNotes.isEmpty()) {
-            sb.append("[재작성 지시 — 이전 초안의 다음 문제를 해결하세요]\n");
-            for (String note : revisionNotes) {
-                sb.append("- ").append(note).append('\n');
+        sb.append("받는 사람 유형: ").append(receiverToRcp(in.receiver())).append('\n');
+        sb.append("보내는 사람(나): ").append(blankToNone(in.senderName())).append('\n');
+        sb.append("원 메일 제목: ").append(blankToNone(in.originalSubject())).append('\n');
+        sb.append("--- 받은 메일 대화 (오래된 것부터) ---\n").append(in.conversation()).append("\n--- 대화 끝 ---\n");
+        sb.append("--- 답해야 할 질문과 사용자의 답변 ---\n");
+        if (in.questionAnswers() == null || in.questionAnswers().isEmpty()) {
+            sb.append("사용자가 전하려는 내용: ").append(blankToNone(in.freeInput())).append('\n');
+        } else {
+            for (AiReplyClient.QuestionAnswer qa : in.questionAnswers()) {
+                sb.append(qa.id()).append(". ").append(qa.question())
+                  .append(" → 사용자 답변: ")
+                  .append(qa.answer() == null || qa.answer().isBlank() ? "(답변 없음 — 중립으로)" : qa.answer())
+                  .append('\n');
             }
         }
+        sb.append("--- 끝 ---\n");
+        sb.append("그 밖에 전하고 싶은 말: ").append(blankToNone(in.extraMessage())).append('\n');
+        sb.append("재작성 사유: ").append(
+                in.revisionNotes() == null || in.revisionNotes().isEmpty()
+                        ? "없음" : String.join(" / ", in.revisionNotes()));
         return sb.toString();
     }
 
-    // ===== ⑥내부 점검 (light) =====
+    // ===== ⑥ 점검 (light) =====
+
+    private static final String INSPECT_SYSTEM_PROMPT = """
+            당신은 한국어 비즈니스 이메일 회신 초안 검수자입니다. 초안을 고치지 말고 평가만 하세요.
+            다섯 가지만 봅니다.
+            1. 완전성 — 모든 질문에 답했는가. '그 밖에 전하고 싶은 말'이 반영됐는가.
+               답 안 한 질문이 있으면 type=UNANSWERED_QUESTION, question_id 에 해당 질문 id.
+            2. 사실 충실 — 대화·답변에 없는 사실·일정·금액·약속·거절 사유를 지어내지 않았는가,
+               수치·기한이 바뀌지 않았는가. 위반 시 type=FABRICATION.
+            3. 입장 일치 — 답변의 입장(수락/거절/조건부/중립)과 초안이 같은가. 모호한 답을 굳히지 않았는가.
+               위반 시 type=STANCE_MISMATCH.
+            4. 격식 — 수신자 유형에 맞는 어체인가. RCP-01·RCP-03 하십시오체, RCP-02·RCP-04 해요체 기본.
+               불일치 시 type=FORMALITY_MISMATCH. 반말·인터넷 구어 혼입도 결함.
+            5. 형식 — 제목·본문이 있고 이메일 형태인가. 위반 시 type=FORMAT.
+            분명한 결함만 passed=false 로. 표현 취향·사소한 어색함은 통과. 의심스러우면 통과.
+            question_id 는 UNANSWERED_QUESTION 일 때만 해당 id, 그 외 0. detail 은 무엇이 왜 문제인지 한 줄.
+            """;
 
     @Override
-    public AiReplyInspection inspect(Receiver receiver, String conversation,
-                                     List<QuestionAnswer> questionAnswers, String freeInput,
-                                     AiReplyDraftResult draft) {
+    public AiReplyInspection inspect(InspectInput in) {
         StringBuilder sb = new StringBuilder();
-        sb.append("[Receiver] ").append(receiver).append('\n');
-        sb.append("[Conversation]\n").append(conversation).append('\n');
-        sb.append(formatQuestionAnswers(questionAnswers));
-        if (freeInput != null && !freeInput.isBlank()) {
-            sb.append("[사용자 자유 입력]\n").append(freeInput).append('\n');
+        sb.append("받는 사람 유형: ").append(receiverToRcp(in.receiver())).append('\n');
+        sb.append("--- 받은 메일 대화 ---\n").append(in.conversation()).append("\n--- 대화 끝 ---\n");
+        sb.append("--- 질문과 사용자의 답변 ---\n");
+        if (in.questionAnswers() == null || in.questionAnswers().isEmpty()) {
+            sb.append("사용자가 전하려는 내용: ").append(blankToNone(in.freeInput())).append('\n');
+        } else {
+            for (AiReplyClient.QuestionAnswer qa : in.questionAnswers()) {
+                sb.append(qa.id()).append(". ").append(qa.question())
+                  .append(" → 사용자 답변: ").append(qa.answer() == null ? "" : qa.answer()).append('\n');
+            }
         }
-        sb.append("[점검 대상 초안 제목]\n").append(draft.generatedSubject()).append('\n');
-        sb.append("[점검 대상 초안 본문]\n").append(draft.generatedEmail()).append('\n');
+        sb.append("--- 끝 ---\n");
+        sb.append("그 밖에 전하고 싶은 말: ").append(blankToNone(in.extraMessage())).append('\n');
+        sb.append("--- 점검할 초안 ---\n제목: ").append(in.draft().generatedSubject())
+          .append("\n본문:\n").append(in.draft().generatedEmail()).append("\n--- 초안 끝 ---");
 
         String json = callAndExtract("reply_inspect", properties.lightModelOrDefault(),
-                DEFAULT_INSPECT_SYSTEM_PROMPT, sb.toString(), inspectSchema());
+                INSPECT_SYSTEM_PROMPT, sb.toString(), inspectSchema());
         try {
             return objectMapper.readValue(json, AiReplyInspection.class);
         } catch (Exception e) {
@@ -211,35 +250,56 @@ public class GeminiAiReplyClient implements AiReplyClient {
         }
     }
 
-    private String formatQuestionAnswers(List<QuestionAnswer> questionAnswers) {
-        if (questionAnswers == null || questionAnswers.isEmpty()) {
-            return "[질문·답변] (질문 없음)\n";
+    // ===== 매핑·헬퍼 =====
+
+    private AiReplyAnalysisResult.Status parseStatus(String s) {
+        if (s == null) return AiReplyAnalysisResult.Status.OK;
+        try {
+            return AiReplyAnalysisResult.Status.valueOf(s.trim());
+        } catch (IllegalArgumentException e) {
+            return AiReplyAnalysisResult.Status.OK;
         }
-        StringBuilder sb = new StringBuilder("[질문·답변]\n");
-        for (QuestionAnswer qa : questionAnswers) {
-            sb.append(qa.id()).append(". 질문: ").append(qa.question()).append('\n')
-              .append("   답변: ")
-              .append(qa.answer() == null || qa.answer().isBlank()
-                      ? "(답변 없음 — 중립적으로 쓸 것)" : qa.answer())
-              .append('\n');
-        }
-        return sb.toString();
     }
 
-    // ===== 요청/응답 공통 =====
+    private Receiver rcpToReceiver(String rcp) {
+        if (rcp == null) return null;
+        return switch (rcp.trim()) {
+            case "RCP-01" -> Receiver.DIRECT_SUPERVISOR;
+            case "RCP-02" -> Receiver.OTHER_DEPT_COLLEAGUE;
+            case "RCP-03" -> Receiver.CLIENT;
+            case "RCP-04" -> Receiver.EXTERNAL_PARTNER;
+            default -> null;
+        };
+    }
+
+    private String receiverToRcp(Receiver r) {
+        if (r == null) return "RCP-02";
+        return switch (r) {
+            case DIRECT_SUPERVISOR -> "RCP-01";
+            case OTHER_DEPT_COLLEAGUE -> "RCP-02";
+            case CLIENT -> "RCP-03";
+            case EXTERNAL_PARTNER -> "RCP-04";
+        };
+    }
+
+    private String blankToNone(String s) {
+        return (s == null || s.isBlank()) ? "없음" : s;
+    }
+
+    private String joinOrNone(List<String> list) {
+        return (list == null || list.isEmpty()) ? "없음" : String.join(", ", list);
+    }
+
+    // ===== Gemini 호출 공통 =====
 
     private String callAndExtract(String op, String model, String systemInstruction,
                                   String userText, Map<String, Object> schema) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("systemInstruction", Map.of("parts", List.of(Map.of("text", systemInstruction))));
-        body.put("contents", List.of(Map.of(
-                "role", "user",
-                "parts", List.of(Map.of("text", userText))
-        )));
+        body.put("contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", userText)))));
         body.put("generationConfig", Map.of(
                 "responseMimeType", "application/json",
-                "responseJsonSchema", schema
-        ));
+                "responseJsonSchema", schema));
 
         String path = "/models/" + model + ":generateContent";
         GeminiResponse response = geminiRestClient.post()
@@ -249,9 +309,7 @@ public class GeminiAiReplyClient implements AiReplyClient {
                 .retrieve()
                 .body(GeminiResponse.class);
 
-        if (response == null
-                || response.candidates() == null
-                || response.candidates().isEmpty()
+        if (response == null || response.candidates() == null || response.candidates().isEmpty()
                 || response.candidates().get(0).content() == null
                 || response.candidates().get(0).content().parts() == null
                 || response.candidates().get(0).content().parts().isEmpty()) {
@@ -265,7 +323,6 @@ public class GeminiAiReplyClient implements AiReplyClient {
         return text;
     }
 
-    /** FUNC-Lim-07: 호출 1회당 평균 토큰·비용 산출 근거. 내용은 로깅하지 않는다. */
     private void logUsage(String op, GeminiResponse.UsageMetadata usage) {
         if (usage == null) return;
         log.info("gemini_usage op={} promptTokens={} candidatesTokens={} totalTokens={}",
@@ -274,17 +331,54 @@ public class GeminiAiReplyClient implements AiReplyClient {
 
     // ===== 스키마 =====
 
-    private Map<String, Object> analyzeSchema() {
+    private Map<String, Object> summarizeSchema() {
+        Map<String, Object> itemProps = new LinkedHashMap<>();
+        itemProps.put("order", Map.of("type", "integer"));
+        itemProps.put("summary", Map.of("type", "string"));
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("type", "object");
+        item.put("properties", itemProps);
+        item.put("required", List.of("order", "summary"));
+
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put("previous_summary", Map.of("type", "string"));
-        props.put("receiver_type", Map.of("type", "string", "enum",
-                List.of("DIRECT_SUPERVISOR", "OTHER_DEPT_COLLEAGUE", "EXTERNAL_PARTNER", "CLIENT")));
-        props.put("questions", Map.of("type", "array", "items", Map.of("type", "string")));
+        props.put("summaries", Map.of("type", "array", "items", item));
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("type", "object");
+        root.put("properties", props);
+        root.put("required", List.of("summaries"));
+        return root;
+    }
+
+    private Map<String, Object> analyzeSchema() {
+        Map<String, Object> recipientProps = new LinkedHashMap<>();
+        recipientProps.put("type", Map.of("type", "string",
+                "enum", List.of("RCP-01", "RCP-02", "RCP-03", "RCP-04")));
+        recipientProps.put("label", Map.of("type", "string"));
+        recipientProps.put("confidence", Map.of("type", "string", "enum", List.of("high", "mid", "low")));
+        recipientProps.put("reason", Map.of("type", "string"));
+        Map<String, Object> recipient = new LinkedHashMap<>();
+        recipient.put("type", "object");
+        recipient.put("properties", recipientProps);
+        recipient.put("required", List.of("type", "label", "confidence", "reason"));
+
+        Map<String, Object> qProps = new LinkedHashMap<>();
+        qProps.put("question", Map.of("type", "string"));
+        qProps.put("mail_order", Map.of("type", "integer"));
+        Map<String, Object> qItem = new LinkedHashMap<>();
+        qItem.put("type", "object");
+        qItem.put("properties", qProps);
+        qItem.put("required", List.of("question", "mail_order"));
+
+        Map<String, Object> props = new LinkedHashMap<>();
+        props.put("status", Map.of("type", "string",
+                "enum", List.of("OK", "EMPTY_THREAD", "NOT_KOREAN")));
+        props.put("recipient", recipient);
+        props.put("questions", Map.of("type", "array", "items", qItem));
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
         root.put("properties", props);
-        root.put("required", List.of("previous_summary", "receiver_type", "questions"));
+        root.put("required", List.of("status", "recipient", "questions"));
         return root;
     }
 
@@ -292,7 +386,6 @@ public class GeminiAiReplyClient implements AiReplyClient {
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("generated_subject", Map.of("type", "string"));
         props.put("generated_email", Map.of("type", "string"));
-
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
         root.put("properties", props);
@@ -303,20 +396,17 @@ public class GeminiAiReplyClient implements AiReplyClient {
     private Map<String, Object> inspectSchema() {
         Map<String, Object> issueProps = new LinkedHashMap<>();
         issueProps.put("type", Map.of("type", "string", "enum",
-                List.of("UNANSWERED_QUESTION", "FABRICATION", "FORMALITY_MISMATCH",
-                        "STANCE_MISMATCH", "FORMAT")));
+                List.of("UNANSWERED_QUESTION", "FABRICATION", "FORMALITY_MISMATCH", "STANCE_MISMATCH", "FORMAT")));
         issueProps.put("question_id", Map.of("type", "integer"));
         issueProps.put("detail", Map.of("type", "string"));
-
-        Map<String, Object> issueItem = new LinkedHashMap<>();
-        issueItem.put("type", "object");
-        issueItem.put("properties", issueProps);
-        issueItem.put("required", List.of("type", "question_id", "detail"));
+        Map<String, Object> issue = new LinkedHashMap<>();
+        issue.put("type", "object");
+        issue.put("properties", issueProps);
+        issue.put("required", List.of("type", "question_id", "detail"));
 
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("passed", Map.of("type", "boolean"));
-        props.put("issues", Map.of("type", "array", "items", issueItem));
-
+        props.put("issues", Map.of("type", "array", "items", issue));
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
         root.put("properties", props);
@@ -324,13 +414,23 @@ public class GeminiAiReplyClient implements AiReplyClient {
         return root;
     }
 
-    /** 파악 응답 바인딩용 — 전역 SNAKE_CASE 로 previous_summary/receiver_type 매핑. */
-    private record AnalyzeOut(String previousSummary, Receiver receiverType, List<String> questions) {
+    // ===== 파싱용 내부 DTO =====
+
+    private record SummarizeOut(List<Item> summaries) {
+        record Item(Integer order, String summary) {
+        }
+    }
+
+    private record AnalyzeOut(String status, RecipientOut recipient, List<QuestionOut> questions) {
+        record RecipientOut(String type, String label, String confidence, String reason) {
+        }
+
+        record QuestionOut(String question, Integer mailOrder) {
+        }
     }
 
     private record GeminiResponse(
             List<Candidate> candidates,
-            // 전역 Jackson 이 SNAKE_CASE 라 multi-word 키는 명시 매핑 필요 (Gemini 는 camelCase 응답).
             @JsonProperty("usageMetadata") UsageMetadata usageMetadata) {
         private record Candidate(Content content) {
         }
