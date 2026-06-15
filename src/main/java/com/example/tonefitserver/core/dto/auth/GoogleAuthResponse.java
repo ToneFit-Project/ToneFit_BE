@@ -12,6 +12,7 @@ public record GoogleAuthResponse(
         Long userId,
         String email,
         String nickname,
+        String profileImageUrl,
         String provider,
         Plan plan,
         int creditBalance,

@@ -64,6 +64,7 @@ public class AuthService {
             throw new BusinessException(ErrorType.INVALID_ID_TOKEN, "Google 계정에서 이메일을 가져올 수 없습니다.");
         }
         String name = extractName(payload, email);
+        String picture = extractPicture(payload);
 
         var existingByProvider = userRepository
                 .findByProviderAndProviderIdAndStatus(PROVIDER_GOOGLE, providerId, UserStatus.ACTIVE);
@@ -74,7 +75,7 @@ public class AuthService {
             // FUNC-Ag-03 #2: 필수 약관 보유 여부 확인. 미보유면 access_token 없이 차단 —
             // termsAgreements 함께 오면 즉시 동의 처리 후 진행.
             enforceRequiredTermsForLogin(existing, termsAgreements);
-            return new GoogleAuthResult(toBody(existing, issueAccessToken(existing.getId())), false);
+            return new GoogleAuthResult(toBody(existing, picture, issueAccessToken(existing.getId())), false);
         }
 
         // 신규 정식 가입
@@ -82,7 +83,7 @@ public class AuthService {
         User created = User.registered(email, PROVIDER_GOOGLE, providerId, name);
         userRepository.save(created);
         saveTermsAgreements(created, termsAgreements);
-        return new GoogleAuthResult(toBody(created, issueAccessToken(created.getId())), true);
+        return new GoogleAuthResult(toBody(created, picture, issueAccessToken(created.getId())), true);
     }
 
     /**
@@ -162,6 +163,18 @@ public class AuthService {
     }
 
     /**
+     * Google ID token 의 picture(프로필 이미지 URL). 없으면 null.
+     * BE 에 저장하지 않고 로그인 응답 body 로만 전달 — FE 가 access token 과 함께 캐시한다
+     * (이미지 생애주기 = 토큰 생애주기. /users/me 는 별도로 들고 있지 않음).
+     */
+    private String extractPicture(GoogleIdToken.Payload payload) {
+        Object p = payload.get("picture");
+        if (p == null) return null;
+        String s = p.toString().trim();
+        return s.isEmpty() ? null : s;
+    }
+
+    /**
      * 필수 약관(REQUIRED=true) 누락 또는 미동의 시 TERMS_AGREEMENT_REQUIRED.
      * payload {@code {"missing_terms": [...]}} 동봉 — FE 가 어떤 항목을 띄울지 알 수 있도록.
      */
@@ -207,11 +220,12 @@ public class AuthService {
         }
     }
 
-    private GoogleAuthResponse toBody(User user, String accessToken) {
+    private GoogleAuthResponse toBody(User user, String profileImageUrl, String accessToken) {
         return new GoogleAuthResponse(
                 user.getId(),
                 user.getEmail(),
                 user.getNickname(),
+                profileImageUrl,
                 user.getProvider(),
                 user.getPlan(),
                 user.getCreditBalance(),
