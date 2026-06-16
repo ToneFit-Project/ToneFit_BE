@@ -59,9 +59,12 @@ public class GeminiAiGenerationClient implements AiGenerationClient {
     }
 
     private String buildUserMessage(Receiver receiver, Purpose purpose, String briefContent) {
-        return "[Receiver] " + receiver + '\n'
-                + "[Purpose] " + purpose + '\n'
-                + "[BriefContent]\n" + briefContent;
+        // PM 생성 prompt 의 입력 형식(목적/상황)에 정렬. 수신자 유형은 DB prompt 가 recipient-specific 이라
+        // 사실 redundant 지만, DEFAULT(generic) fallback 을 위해 함께 보낸다.
+        // 목적은 Purpose enum 으로 전달 — prompt 가 PUR 로 매핑·추론(목적 미명시 시 상황 추론).
+        return "수신자 유형: " + receiver + '\n'
+                + "목적: " + purpose + '\n'
+                + "상황: " + briefContent;
     }
 
     private String callAndExtract(String systemInstruction, String userText, Map<String, Object> schema) {
