@@ -42,8 +42,13 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
 
     private static final String DEFAULT_CORRECTION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 교정 어시스턴트입니다.
-            입력된 이메일 본문을 검토하고 교정 항목(changes) 배열만 반환하세요.
+            입력된 이메일 본문을 검토하고 교정 항목(changes) 배열을 반환하세요.
             전체 교정 본문은 서버가 원문 + changes 로 재조립하므로 별도 반환할 필요 없습니다.
+
+            [사고 과정 — reasoning 먼저, changes 나중]
+            먼저 reasoning 필드에 교정 의심 구간을 짚고 각각 ① 보호 대상(수정 금지)인지 ② 등급(AUTO/SUGGEST/STYLE)을
+            간단히 판단하세요. 오류가 눈에 보일 때만 교정하고, 일부러 찾지 않습니다(과교정 방지).
+            그 판단을 마친 뒤에만 changes 를 작성하세요. reasoning 은 사고용이며 사용자에게 노출되지 않습니다.
 
             changes 각 항목 (index 는 0부터, 본문 등장 순서):
             - original: 원문에 실제로 존재하는 교정 대상 substring (정확히 그대로 발췌, 가공 금지)
@@ -76,9 +81,11 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         String user = buildCorrectionUserMessage(receiver, purpose, preparedOriginal);
         String json = callAndExtract(system, user, correctionSchema());
 
-        AiCorrectionResult raw;
+        // reasoning(선행 CoT) + changes 로 파싱. reasoning 은 과교정 방지용 사고 과정일 뿐
+        // 폐기한다 — 메일 내용이 섞일 수 있어 로깅·노출·영속 금지(내용 위생). changes 만 다음 단계로.
+        CorrectionRaw raw;
         try {
-            raw = objectMapper.readValue(json, AiCorrectionResult.class);
+            raw = objectMapper.readValue(json, CorrectionRaw.class);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse Gemini correction response: " + json, e);
         }
@@ -292,14 +299,22 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
                 "reason", "label", "confidence", "applied_rules"));
 
         Map<String, Object> rootProps = new LinkedHashMap<>();
+        // reasoning 을 changes 보다 먼저 — autoregressive 생성에서 사고가 changes 출력을 조건짓도록(과교정 방지 CoT).
+        rootProps.put("reasoning", Map.of("type", "string"));
         // corrected_email 제거 — 서버가 원문 + changes 로 재조립하므로 Gemini 출력 토큰 절약.
         rootProps.put("changes", Map.of("type", "array", "items", changeItem));
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
         root.put("properties", rootProps);
-        root.put("required", List.of("changes"));
+        // propertyOrdering: Gemini 가 reasoning 을 먼저 생성하도록 순서 강제(없으면 changes 가 먼저 나와 CoT 무효).
+        root.put("propertyOrdering", List.of("reasoning", "changes"));
+        root.put("required", List.of("reasoning", "changes"));
         return root;
+    }
+
+    /** Gemini 교정 응답 파싱용 — reasoning(선행 CoT, 폐기) + changes. */
+    private record CorrectionRaw(String reasoning, List<AiCorrectionResult.Change> changes) {
     }
 
     private record GeminiResponse(
