@@ -66,6 +66,9 @@ public class ReplyService {
     /** "너무 김" 기준 — 정리(인용·서명 제거) 후 대화 본문 합산 글자 수 (PM 확정, FUNC-Rep-14). */
     private static final int CONVERSATION_MAX_CHARS = 20_000;
 
+    /** 요약 호출 기준 — 답장 대상 제외 이전 메일 합산 길이가 이를 넘으면 요약(임시값, PM 기준 전달 대기). */
+    private static final int SUMMARY_THRESHOLD_CHARS = 2_000;
+
     private final UserRepository userRepository;
     private final UserTermsAgreementRepository userTermsAgreementRepository;
     private final PromptVersionRepository promptVersionRepository;
@@ -93,40 +96,96 @@ public class ReplyService {
             throw new BusinessException(ErrorType.CONTENT_TOO_LONG,
                     "정리 후 대화 본문 합산이 20,000자를 초과했습니다.");
         }
+        // 정리 결과가 통째로 비면 AI 호출 전에 EMPTY_THREAD (한도 미차감).
+        boolean allBlank = cleaned.mails().stream().allMatch(String::isBlank)
+                && cleaned.recoveredContext().isBlank();
+        if (allBlank) {
+            throw new BusinessException(ErrorType.EMPTY_THREAD);
+        }
 
         // 회신 1번 = 일일(합산) 1회 — 파악 호출 시점 차감 (PM 확정). 분당 한도도 함께.
+        // 내부 요약+파악이 여러 AI 호출이어도 회신 1회로 친다.
         userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
-        List<String> mailBodies = new ArrayList<>();
-        if (!cleaned.recoveredContext().isEmpty()) {
-            mailBodies.add(RECOVERED_LABEL + "\n" + cleaned.recoveredContext());
-        }
-        mailBodies.addAll(cleaned.mails());
+        // ② 요약(이전 메일 길 때만) + 대화 조립 — conversation 은 BE 가 만들어 모델 재출력 방지(FUNC-Rep-07).
+        List<String> senders = req.mails().stream().map(ReplyAnalysisRequest.Mail::sender).toList();
+        String conversation = buildConversation(senders, cleaned);
 
         long start = System.currentTimeMillis();
+        String me = user.getNickname() + " / " + user.getEmail();
+        String replyTarget = senders.isEmpty() ? null : senders.get(senders.size() - 1);
         AiReplyAnalysisResult result;
         try {
-            result = aiClient.analyze(
-                    null, // 파악 prompt 는 수신자 무관 — 구현체 기본값 사용
-                    mailBodies,
+            result = aiClient.analyze(new AiReplyClient.AnalyzeInput(
+                    me, replyTarget,
                     req.to() == null ? List.of() : req.to(),
-                    req.cc() == null ? List.of() : req.cc());
+                    req.cc() == null ? List.of() : req.cc(),
+                    conversation));
         } catch (Exception e) {
             throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
                     ErrorType.AI_SERVICE_ERROR.getMessage(), null, e);
         }
-        log.info("reply_analyze durationMs={} mails={} recovered={}",
-                System.currentTimeMillis() - start, cleaned.mails().size(),
-                !cleaned.recoveredContext().isEmpty());
+        log.info("reply_analyze durationMs={} mails={} status={}",
+                System.currentTimeMillis() - start, cleaned.mails().size(), result.status());
 
-        // 질문 id 는 서버가 1부터 순번 부여 — 작성 호출 답변 매핑·내부 점검의 기준 식별자.
-        List<ReplyAnalysisResponse.Question> questions = new ArrayList<>();
-        List<String> raw = result.questions() == null ? List.of() : result.questions();
-        for (int i = 0; i < raw.size(); i++) {
-            questions.add(new ReplyAnalysisResponse.Question(i + 1, raw.get(i)));
+        // 사전 점검 결과 → 구분 에러 (FUNC-Rep-14).
+        switch (result.status()) {
+            case EMPTY_THREAD -> throw new BusinessException(ErrorType.EMPTY_THREAD);
+            case NOT_KOREAN -> throw new BusinessException(ErrorType.NOT_KOREAN);
+            default -> { }
+        }
+        if (result.recipient() == null) {
+            throw new BusinessException(ErrorType.AI_SERVICE_ERROR, "파악 결과가 비어 있습니다.");
         }
 
-        return new ReplyAnalysisResponse(result.conversation(), result.receiverTypeSuggestion(), questions);
+        // 질문 id 는 서버가 1부터 부여 — 작성 호출 답변 매핑·내부 점검의 기준 식별자.
+        List<ReplyAnalysisResponse.Question> questions = new ArrayList<>();
+        List<AiReplyAnalysisResult.Question> raw = result.questions() == null ? List.of() : result.questions();
+        for (int i = 0; i < raw.size(); i++) {
+            questions.add(new ReplyAnalysisResponse.Question(i + 1, raw.get(i).question(), raw.get(i).mailOrder()));
+        }
+
+        AiReplyAnalysisResult.Recipient r = result.recipient();
+        return new ReplyAnalysisResponse(
+                conversation,
+                new ReplyAnalysisResponse.Recipient(r.type(), r.label(), r.confidence(), r.reason()),
+                questions);
+    }
+
+    /**
+     * 파악·작성에 넘길 대화 텍스트 조립. 답장 대상(마지막) 메일은 항상 원문, 이전 메일은 합산이 길면 요약.
+     * 인용에서 복원한 이전 대화는 맨 앞에 덧붙인다. 요약은 별도 AI 호출이라 한도 차감 이후에만 부른다.
+     */
+    private String buildConversation(List<String> senders, MailCleaner.CleanResult cleaned) {
+        List<String> bodies = cleaned.mails();
+        int n = bodies.size();
+        List<String> rendered = new ArrayList<>(bodies);
+        boolean[] summarized = new boolean[n];
+
+        if (n > 1) {
+            List<String> older = bodies.subList(0, n - 1);
+            int olderChars = older.stream().mapToInt(String::length).sum();
+            if (olderChars > SUMMARY_THRESHOLD_CHARS) {
+                List<String> summaries = aiClient.summarize(older);
+                for (int i = 0; i < older.size() && i < summaries.size(); i++) {
+                    rendered.set(i, summaries.get(i));
+                    summarized[i] = true;
+                }
+            }
+        }
+
+        StringBuilder sb = new StringBuilder();
+        if (!cleaned.recoveredContext().isBlank()) {
+            sb.append(RECOVERED_LABEL).append('\n').append(cleaned.recoveredContext()).append("\n\n");
+        }
+        for (int i = 0; i < n; i++) {
+            String sender = (i < senders.size() && senders.get(i) != null && !senders.get(i).isBlank())
+                    ? senders.get(i) : "(미상)";
+            sb.append('[').append(i + 1).append(']').append(summarized[i] ? " (요약)" : "")
+              .append(" 보낸 사람: ").append(sender).append('\n')
+              .append("본문: ").append(rendered.get(i)).append('\n');
+        }
+        return sb.toString().strip();
     }
 
     // ===== 작성 호출 =====
@@ -143,6 +202,9 @@ public class ReplyService {
         String promptContent = prompt != null ? prompt.getContent() : null;
         String conversation = TextSanitizer.sanitize(req.conversation());
         String freeInput = TextSanitizer.sanitize(req.freeInput());
+        String extraMessage = TextSanitizer.sanitize(req.extraMessage());
+        String originalSubject = TextSanitizer.sanitize(req.originalSubject());
+        String senderName = user.getNickname();
 
         long budget = replyProperties.draftBudgetMillis();
         long start = System.currentTimeMillis();
@@ -150,7 +212,9 @@ public class ReplyService {
         // ⑤ 작성 (1차)
         AiReplyDraftResult first;
         try {
-            first = aiClient.draft(promptContent, req.receiverType(), conversation, qas, freeInput, List.of());
+            first = aiClient.draft(new AiReplyClient.DraftInput(
+                    promptContent, req.receiverType(), senderName, originalSubject,
+                    conversation, qas, freeInput, extraMessage, List.of()));
         } catch (Exception e) {
             throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
                     ErrorType.AI_SERVICE_ERROR.getMessage(), null, e);
@@ -168,7 +232,8 @@ public class ReplyService {
         }
         AiReplyInspection check;
         try {
-            check = aiClient.inspect(req.receiverType(), conversation, qas, freeInput, first);
+            check = aiClient.inspect(new AiReplyClient.InspectInput(
+                    req.receiverType(), conversation, qas, freeInput, extraMessage, first));
         } catch (Exception e) {
             log.warn("reply inspect failed (best-effort): {}", e.toString());
             return toResponse(first);
@@ -192,8 +257,9 @@ public class ReplyService {
         }
 
         try {
-            AiReplyDraftResult second = aiClient.draft(promptContent, req.receiverType(), conversation,
-                    qas, freeInput, toRevisionNotes(check));
+            AiReplyDraftResult second = aiClient.draft(new AiReplyClient.DraftInput(
+                    promptContent, req.receiverType(), senderName, originalSubject,
+                    conversation, qas, freeInput, extraMessage, toRevisionNotes(check)));
             log.info("reply_draft inspect=failed types={} rewrite=true totalDurationMs={}",
                     issueTypes, System.currentTimeMillis() - start);
             // 재작성본이 비정상이면 첫 초안 fallback — 쓸 수 있는 초안을 이미 들고 있다.
