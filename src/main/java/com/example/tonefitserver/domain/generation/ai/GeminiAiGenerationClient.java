@@ -36,8 +36,9 @@ public class GeminiAiGenerationClient implements AiGenerationClient {
             - brief_content 의 의도를 보존하고, 임의로 사실을 추가하지 마세요.
 
             [출력 형식]
-            응답은 JSON Schema 로 강제됩니다:
-            { "generated_subject": "<제목>", "generated_email": "<본문>" }
+            - 본문(generated_email)은 문단과 문단 사이를 빈 줄(\\n\\n)로 구분하고,
+              번호·불릿 목록은 각 항목을 줄바꿈(\\n)으로 나눕니다. 한 줄로 평평하게 출력하지 않습니다.
+            - 응답은 JSON Schema 로 강제됩니다: { "generated_subject": "<제목>", "generated_email": "<본문>" }
             """;
 
     private final RestClient geminiRestClient;
@@ -59,9 +60,10 @@ public class GeminiAiGenerationClient implements AiGenerationClient {
     }
 
     private String buildUserMessage(Receiver receiver, Purpose purpose, String briefContent) {
-        // PM 생성 prompt 의 입력 형식(목적/상황)에 정렬. 수신자 유형은 DB prompt 가 recipient-specific 이라
-        // 사실 redundant 지만, DEFAULT(generic) fallback 을 위해 함께 보낸다.
-        // 목적은 Purpose enum 으로 전달 — prompt 가 PUR 로 매핑·추론(목적 미명시 시 상황 추론).
+        // PM 생성 prompt 의 입력 형식([Receiver]/[Purpose]/[BriefContent])에 정렬. 수신자 유형은
+        // DB prompt 가 recipient-specific 이라 redundant 지만, DEFAULT(generic) fallback 을 위해 함께 보낸다.
+        // 목적은 Purpose enum 값(NOTICE/REQUEST/THANKS/APOLOGY/DECLINE/REPORT)을 그대로 전달 —
+        // prompt 의 목적별 구조 규칙이 동일 enum 키를 사용한다(REPLY 는 회신 모드 전용이라 생성 대상 아님).
         return "수신자 유형: " + receiver + '\n'
                 + "목적: " + purpose + '\n'
                 + "상황: " + briefContent;
