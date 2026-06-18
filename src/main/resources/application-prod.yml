@@ -22,6 +22,9 @@ jwt:
 
 server:
   port: 8080
+  # ALB 가 TLS 종단 → 앱은 HTTP 로 받는다. X-Forwarded-* 를 신뢰해 request.isSecure()=true 로 만들어야
+  # Spring Security 가 HTTPS 요청에만 발화하는 HSTS 헤더를 prod 에서 정상적으로 내보낸다(스킴 인식도 교정).
+  forward-headers-strategy: framework
   tomcat:
     accept-count: 100
     max-connections: 8192
@@ -31,6 +34,18 @@ server:
 
 ai:
   provider: gemini
+
+# 운영 API 명세는 별도 관리 → prod 에서 Swagger UI·api-docs 비노출(공격 표면 축소).
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+# prod 는 Swagger 가 없으므로 strict CSP(default-src 'none'). JSON 응답만 내므로 무영향.
+app:
+  security:
+    content-security-policy: "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 logging:
   level:
