@@ -81,6 +81,11 @@ google:
 app:
   cookie:
     secure: ${COOKIE_SECURE:true}
+  security:
+    # 응답 Content-Security-Policy. 기본값은 Swagger UI(로컬·도커) 렌더 호환을 위해
+    # script/style 'unsafe-inline' 을 허용한 완화판. prod 는 Swagger 비활성이라
+    # application-prod.yml 에서 strict(default-src 'none')로 override 한다.
+    content-security-policy: "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'"
 
 # 사용자별(계정 단위) AI 호출 한도 (REQ-Limit). 정식 사용자만 적용, 익명/데모 제외.
 # 값은 환경변수(운영은 AWS Secrets Manager)로 주입 — Extension 재배포 없이 조정.

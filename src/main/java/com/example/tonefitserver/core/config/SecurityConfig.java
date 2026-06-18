@@ -6,6 +6,7 @@ import com.example.tonefitserver.core.security.RateLimitProperties;
 import com.example.tonefitserver.core.security.UserLimitProperties;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -14,6 +15,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy;
 import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
@@ -34,12 +36,34 @@ public class SecurityConfig {
     private final RateLimitFilter rateLimitFilter;
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            @Value("${app.security.content-security-policy}") String contentSecurityPolicy) throws Exception {
         http
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(AbstractHttpConfigurer::disable)
             .formLogin(AbstractHttpConfigurer::disable)
             .httpBasic(AbstractHttpConfigurer::disable)
+            // QA 제안: 응답 보안 헤더 강화. 기본 헤더(nosniff·X-Frame-Options DENY·no-store
+            // Cache-Control·X-XSS-Protection 0)는 유지되고, 아래에서 추가/세부 설정한다.
+            .headers(headers -> headers
+                // 클릭재킹: 기본 X-Frame-Options DENY 유지 + CSP frame-ancestors 로 현대 브라우저까지 커버.
+                .frameOptions(frame -> frame.deny())
+                // HSTS: ALB(TLS 종단) 뒤라 prod 는 forward-headers-strategy=framework 로 isSecure()=true → 발화.
+                // 로컬/도커(HTTP)는 secure 아님 → 미발화(의도된 동작 — localhost 에 HSTS 가 걸리는 것 회피).
+                .httpStrictTransportSecurity(hsts -> hsts
+                    .includeSubDomains(true)
+                    .preload(true)
+                    .maxAgeInSeconds(31_536_000))
+                .referrerPolicy(referrer -> referrer.policy(ReferrerPolicy.NO_REFERRER))
+                // CSP 는 프로파일별 외부화(app.security.content-security-policy):
+                //  - prod: Swagger 비활성이라 strict(default-src 'none') 가능.
+                //  - 로컬/도커: Swagger UI inline script/style 위해 'unsafe-inline' 허용한 완화판.
+                // JSON 응답엔 사실상 무의미(JSON 은 렌더링되지 않음)하지만 방어적으로 둔다.
+                .contentSecurityPolicy(csp -> csp.policyDirectives(contentSecurityPolicy))
+                .permissionsPolicyHeader(permissions -> permissions.policy(
+                    "geolocation=(), camera=(), microphone=(), payment=(), usb=()"))
+            )
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(
