@@ -139,7 +139,12 @@ public class AuthService {
                 throw new BusinessException(ErrorType.INVALID_ID_TOKEN);
             }
             return idToken.getPayload();
-        } catch (GeneralSecurityException | java.io.IOException e) {
+        } catch (GeneralSecurityException | java.io.IOException | IllegalArgumentException e) {
+            // GeneralSecurityException: 서명·만료·audience 등 검증 실패
+            // IOException: JsonFactory 파싱 / 인증서 fetch
+            // IllegalArgumentException: 형식이 깨진 토큰 — Google client 가 세그먼트 수·base64 오류 시 던진다.
+            //   (이전엔 미포착 → 500. 위조/깨진 토큰도 401 INVALID_ID_TOKEN 으로 통일.)
+            // ※ BusinessException(INVALID_ID_TOKEN, idToken==null 분기)은 TonefitException 이라 여기 안 걸리고 그대로 전파.
             log.warn("Google ID token 검증 실패: {}", e.getMessage());
             throw new BusinessException(ErrorType.INVALID_ID_TOKEN);
         }
