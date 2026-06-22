@@ -64,6 +64,23 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("GEMINI_LITE_MODEL")) {
                 properties.put("gemini.light-model", app.get("GEMINI_LITE_MODEL").asText());
             }
+            // 생성·교정 전용 모델·사고수준 — 모두 선택(없으면 application.yml 의 PM 확정 기본값 사용).
+            // 운영에서 재배포 없이 모델/사고수준 튜닝 가능하도록 Secrets Manager 키로 노출.
+            if (app.hasNonNull("GEMINI_GENERATION_MODEL")) {
+                properties.put("gemini.generation-model", app.get("GEMINI_GENERATION_MODEL").asText());
+            }
+            if (app.hasNonNull("GEMINI_GENERATION_THINKING_BUDGET")) {
+                properties.put("gemini.generation-thinking-budget", app.get("GEMINI_GENERATION_THINKING_BUDGET").asText());
+            }
+            if (app.hasNonNull("GEMINI_CORRECTION_MODEL")) {
+                properties.put("gemini.correction-model", app.get("GEMINI_CORRECTION_MODEL").asText());
+            }
+            if (app.hasNonNull("GEMINI_CORRECTION_THINKING_BUDGET")) {
+                properties.put("gemini.correction-thinking-budget", app.get("GEMINI_CORRECTION_THINKING_BUDGET").asText());
+            }
+            if (app.hasNonNull("GEMINI_CORRECTION_THINKING_LEVEL")) {
+                properties.put("gemini.correction-thinking-level", app.get("GEMINI_CORRECTION_THINKING_LEVEL").asText());
+            }
             // Google OAuth audience(client_id) whitelist — ID token 검증용. 콤마 구분 다중 허용.
             if (app.hasNonNull("GOOGLE_OAUTH_CLIENT_IDS")) {
                 properties.put("google.oauth.client-ids", app.get("GOOGLE_OAUTH_CLIENT_IDS").asText());

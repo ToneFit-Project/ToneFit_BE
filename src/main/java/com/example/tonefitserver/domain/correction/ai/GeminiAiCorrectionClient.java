@@ -237,12 +237,25 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
                 "role", "user",
                 "parts", List.of(Map.of("text", userText))
         )));
-        body.put("generationConfig", Map.of(
-                "responseMimeType", "application/json",
-                "responseJsonSchema", schema
-        ));
+        Map<String, Object> genConfig = new LinkedHashMap<>();
+        genConfig.put("responseMimeType", "application/json");
+        genConfig.put("responseJsonSchema", schema);
+        // 교정 사고 설정(PM 재확인 — thinkingBudget·thinkingLevel 둘 다 지정 요청).
+        Map<String, Object> thinkingConfig = new LinkedHashMap<>();
+        Integer thinkingBudget = properties.correctionThinkingBudget();
+        if (thinkingBudget != null && thinkingBudget >= 0) {
+            thinkingConfig.put("thinkingBudget", thinkingBudget);
+        }
+        String thinkingLevel = properties.correctionThinkingLevel();
+        if (thinkingLevel != null && !thinkingLevel.isBlank()) {
+            thinkingConfig.put("thinkingLevel", thinkingLevel);
+        }
+        if (!thinkingConfig.isEmpty()) {
+            genConfig.put("thinkingConfig", thinkingConfig);
+        }
+        body.put("generationConfig", genConfig);
 
-        String path = "/models/" + properties.model() + ":generateContent";
+        String path = "/models/" + properties.correctionModelOrDefault() + ":generateContent";
         GeminiResponse response = geminiRestClient.post()
                 .uri(uri -> uri.path(path).build())
                 .header("x-goog-api-key", properties.apiKey())
