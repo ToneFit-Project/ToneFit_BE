@@ -76,12 +76,17 @@ public class GeminiAiGenerationClient implements AiGenerationClient {
                 "role", "user",
                 "parts", List.of(Map.of("text", userText))
         )));
-        body.put("generationConfig", Map.of(
-                "responseMimeType", "application/json",
-                "responseJsonSchema", schema
-        ));
+        Map<String, Object> genConfig = new LinkedHashMap<>();
+        genConfig.put("responseMimeType", "application/json");
+        genConfig.put("responseJsonSchema", schema);
+        // 생성: gemini-2.5 계열 → thinkingBudget 으로 사고 토큰 상한 지정(비용 절감, PM 실험). 3 계열은 thinkingLevel 권장.
+        Integer thinkingBudget = properties.generationThinkingBudget();
+        if (thinkingBudget != null && thinkingBudget >= 0) {
+            genConfig.put("thinkingConfig", Map.of("thinkingBudget", thinkingBudget));
+        }
+        body.put("generationConfig", genConfig);
 
-        String path = "/models/" + properties.model() + ":generateContent";
+        String path = "/models/" + properties.generationModelOrDefault() + ":generateContent";
         GeminiResponse response = geminiRestClient.post()
                 .uri(uri -> uri.path(path).build())
                 .header("x-goog-api-key", properties.apiKey())
