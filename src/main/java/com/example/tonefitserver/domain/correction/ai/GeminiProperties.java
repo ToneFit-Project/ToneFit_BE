@@ -11,8 +11,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * <p>생성·교정은 PM 실험 결과 모델·사고수준을 각각 분리 운영한다(비용 절감). 미설정 시 {@code model} fallback.
  * <ul>
  *   <li>생성: {@code generationModel} + {@code generationThinkingBudget}(gemini-2.5 계열 — thinkingBudget 사용)</li>
- *   <li>교정: {@code correctionModel} + {@code correctionThinkingBudget} + {@code correctionThinkingLevel}
- *       (PM 재확인 — gemini-3 계열이지만 budget·level 둘 다 지정 요청)</li>
+ *   <li>교정: {@code correctionModel} + {@code correctionThinkingLevel}(gemini-3 계열 — thinkingLevel 사용.
+ *       budget·level 동시 지정은 Gemini 가 거부하므로 level 만 둔다)</li>
  * </ul>
  */
 @ConfigurationProperties(prefix = "gemini")
@@ -24,7 +24,6 @@ public record GeminiProperties(
         String generationModel,
         Integer generationThinkingBudget,
         String correctionModel,
-        Integer correctionThinkingBudget,
         String correctionThinkingLevel
 ) {
     /** 보조 단계용 모델 — 미설정 시 메인 모델 사용. */

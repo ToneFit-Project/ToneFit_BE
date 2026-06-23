@@ -240,18 +240,11 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         Map<String, Object> genConfig = new LinkedHashMap<>();
         genConfig.put("responseMimeType", "application/json");
         genConfig.put("responseJsonSchema", schema);
-        // 교정 사고 설정(PM 재확인 — thinkingBudget·thinkingLevel 둘 다 지정 요청).
-        Map<String, Object> thinkingConfig = new LinkedHashMap<>();
-        Integer thinkingBudget = properties.correctionThinkingBudget();
-        if (thinkingBudget != null && thinkingBudget >= 0) {
-            thinkingConfig.put("thinkingBudget", thinkingBudget);
-        }
+        // 교정: gemini-3 계열 → thinkingLevel 만 지정. budget·level 동시 지정은 Gemini 가 거부
+        //   ("You can only set only one of thinking budget and thinking level") → level 만 사용.
         String thinkingLevel = properties.correctionThinkingLevel();
         if (thinkingLevel != null && !thinkingLevel.isBlank()) {
-            thinkingConfig.put("thinkingLevel", thinkingLevel);
-        }
-        if (!thinkingConfig.isEmpty()) {
-            genConfig.put("thinkingConfig", thinkingConfig);
+            genConfig.put("thinkingConfig", Map.of("thinkingLevel", thinkingLevel));
         }
         body.put("generationConfig", genConfig);
 
