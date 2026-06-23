@@ -21,7 +21,7 @@ import java.time.Duration;
  *       {@code replyPerMinute} (FUNC-Lim-09)</li>
  *   <li>데모(웹, 토큰 없음)는 호출하지 않음 — 서비스 계층에서 userId == null 이면 skip</li>
  *   <li>AI 호출 직전에 차감 → 성공·실패 무관하게 1회 카운트 (FUNC-Lim-06).
- *       회신은 파악 호출 시점에 일일 1회 차감 (PM 확정 — "회신 1번 = 1회")</li>
+ *       회신은 호출별 차감으로 통일 — 요약·파악·작성 각 1회 (PM 확정 v0.58, 재설계로 변경)</li>
  * </ul>
  *
  * <p><b>저장소</b>: Caffeine + Bucket4j in-memory. 단일 인스턴스 가정 (IP RateLimitFilter 와 동일 전제).
@@ -77,17 +77,6 @@ public class UserRateLimiter {
         Bucket dailyBucket = buckets.get("daily:" + userId, k -> newDailyBucket());
         if (!dailyBucket.tryConsume(1)) {
             minuteBucket.addTokens(1);
-            throw new BusinessException(ErrorType.USER_RATE_LIMITED);
-        }
-    }
-
-    /**
-     * 분당 한도만 차감 — 회신 작성 호출용. 일일 1회는 파악 호출에서 이미 차감됐고(PM 확정),
-     * 작성 호출은 무상태라 직접 반복 호출이 가능하므로 분당 가드만 별도로 둔다
-     * (없으면 일일·분당 어느 쪽도 안 걸린 채 메인 모델을 무한 호출 가능).
-     */
-    public void consumeMinuteOnly(String category, Long userId) {
-        if (!minuteBucket(category, userId).tryConsume(1)) {
             throw new BusinessException(ErrorType.USER_RATE_LIMITED);
         }
     }
