@@ -19,6 +19,7 @@ import com.example.tonefitserver.domain.reply.dto.ReplyAnalysisRequest;
 import com.example.tonefitserver.domain.reply.dto.ReplyAnalysisResponse;
 import com.example.tonefitserver.domain.reply.dto.ReplyDraftRequest;
 import com.example.tonefitserver.domain.reply.dto.ReplyDraftResponse;
+import com.example.tonefitserver.domain.reply.dto.ReplySummaryResponse;
 import com.example.tonefitserver.domain.reply.support.MailCleaner;
 import com.example.tonefitserver.domain.user.User;
 import com.example.tonefitserver.domain.user.UserRepository;
@@ -33,11 +34,16 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
- * 회신(Reply) 도메인 서비스. REQ-Reply — 무상태 2-호출 파이프라인.
+ * 회신(Reply) 도메인 서비스. REQ-Reply — 무상태 파이프라인.
+ *
+ * <p>PM 재설계(v0.58): 요약을 생성 파이프라인에서 분리. "회신 준비" 버튼에서 FE 가 요약·파악을 병렬
+ * 호출하고, 요약은 화면 표시 전용으로만 쓴다. 파악·작성은 요약본이 아니라 정리된 원문 대화를 사용한다.
  *
  * <ul>
- *   <li>{@link #analyze} — 파악 호출 (FUNC-Rep-02 ①~③): MailCleaner 기계 정리 →
- *       light 모델 요약·파악. 응답을 FE 가 입력 화면(R-01)에 띄웠다가 작성 호출로 회송 — 서버 상태 없음.</li>
+ *   <li>{@link #summary} — 요약 호출 (화면 표시 전용): MailCleaner 정리 → light 모델 메일별 요약.
+ *       파악·작성 경로엔 쓰이지 않는다.</li>
+ *   <li>{@link #analyze} — 파악 호출 (FUNC-Rep-02 ①~③): MailCleaner 정리 → light 모델 파악(요약 없이
+ *       정리 원문 대화 기반). 응답을 FE 가 입력 화면(R-01)에 띄웠다가 작성 호출로 회송 — 서버 상태 없음.</li>
  *   <li>{@link #draft} — 작성 호출 (⑤~⑥): main 모델 작성 → light 모델 점검(best-effort) →
  *       실패 + 시간 여유 시 1회 재작성(첫 초안 폐기). 시간 모자라면 첫 초안 그대로 (FUNC-Rep-11/12).</li>
  * </ul>
@@ -46,8 +52,8 @@ import java.util.stream.Collectors;
  * 받은 메일은 제3자 글 — 본문·보낸 사람 정보를 로그에도 남기지 않는다.
  * 점검 issue 의 detail 도 내용이 섞일 수 있어 재작성 프롬프트로만 쓰고 로그엔 type 만.
  *
- * <p>게이트 (v0.57, PM 확정): 킬스위치({@code reply.enabled}, FUNC-Lim-10) → MAIL_READ 동의(FUNC-Ag-08,
- * 회신만 차단) → 계정 한도(일일 합산 1회는 파악 호출에서 차감, 작성은 분당 가드만) →
+ * <p>게이트 (PM 확정): 킬스위치({@code reply.enabled}, FUNC-Lim-10) → MAIL_READ 동의(FUNC-Ag-08,
+ * 회신만 차단) → 계정 한도(일일·분당 모두 호출별 차감으로 통일 — 요약·파악·작성 각 1회) →
  * 정리 후 본문 합산 20,000자 초과 시 CONTENT_TOO_LONG.
  *
  * <p>Phase C: reply 메타데이터·이벤트, 잔여 에러 세분화(한국어 감지 등), 비용 경보.
@@ -66,15 +72,64 @@ public class ReplyService {
     /** "너무 김" 기준 — 정리(인용·서명 제거) 후 대화 본문 합산 글자 수 (PM 확정, FUNC-Rep-14). */
     private static final int CONVERSATION_MAX_CHARS = 20_000;
 
-    /** 요약 호출 기준 — 답장 대상 제외 이전 메일 합산 길이가 이를 넘으면 요약(임시값, PM 기준 전달 대기). */
-    private static final int SUMMARY_THRESHOLD_CHARS = 2_000;
-
     private final UserRepository userRepository;
     private final UserTermsAgreementRepository userTermsAgreementRepository;
     private final PromptVersionRepository promptVersionRepository;
     private final AiReplyClient aiClient;
     private final ReplyProperties replyProperties;
     private final UserRateLimiter userRateLimiter;
+
+    // ===== 요약 호출 (화면 표시 전용) =====
+
+    /**
+     * 요약 호출 — 받은 메일을 메일별로 요약해 FE 화면 표시에만 쓴다(파악·작성 경로 미사용).
+     * 게이트·검증·차감 순서는 파악과 동일(킬스위치 → MAIL_READ → CONTENT_TOO_LONG/EMPTY 검증은
+     * 차감 전 → consume). 요약은 별도 호출이라 호출별로 한도를 차감한다(PM 확정 — 통일).
+     */
+    public ReplySummaryResponse summary(Long userId, ReplyAnalysisRequest req) {
+        ensureReplyEnabled();
+        User user = loadUser(userId);
+        requireMailReadConsent(user.getId());
+
+        List<String> rawBodies = req.mails().stream()
+                .map(m -> TextSanitizer.sanitize(m.body()))
+                .toList();
+        MailCleaner.CleanResult cleaned = MailCleaner.clean(rawBodies);
+
+        // 검증은 차감 전 (AI 호출 아니므로 카운트 안 함, FUNC-Lim-06).
+        int totalChars = cleaned.mails().stream().mapToInt(String::length).sum();
+        if (totalChars > CONVERSATION_MAX_CHARS) {
+            throw new BusinessException(ErrorType.CONTENT_TOO_LONG,
+                    "정리 후 대화 본문 합산이 20,000자를 초과했습니다.");
+        }
+        boolean allBlank = cleaned.mails().stream().allMatch(String::isBlank);
+        if (allBlank) {
+            throw new BusinessException(ErrorType.EMPTY_THREAD);
+        }
+
+        userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
+
+        List<String> senders = req.mails().stream().map(ReplyAnalysisRequest.Mail::sender).toList();
+        long start = System.currentTimeMillis();
+        List<String> summaries;
+        try {
+            summaries = aiClient.summarize(cleaned.mails());
+        } catch (Exception e) {
+            throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
+                    ErrorType.AI_SERVICE_ERROR.getMessage(), null, e);
+        }
+        log.info("reply_summary durationMs={} mails={}",
+                System.currentTimeMillis() - start, cleaned.mails().size());
+
+        List<ReplySummaryResponse.MailSummary> result = new ArrayList<>();
+        for (int i = 0; i < cleaned.mails().size(); i++) {
+            String sender = (i < senders.size() && senders.get(i) != null && !senders.get(i).isBlank())
+                    ? senders.get(i) : "(미상)";
+            String summary = i < summaries.size() ? summaries.get(i) : "";
+            result.add(new ReplySummaryResponse.MailSummary(i + 1, sender, summary));
+        }
+        return new ReplySummaryResponse(result);
+    }
 
     // ===== 파악 호출 =====
 
@@ -103,11 +158,11 @@ public class ReplyService {
             throw new BusinessException(ErrorType.EMPTY_THREAD);
         }
 
-        // 회신 1번 = 일일(합산) 1회 — 파악 호출 시점 차감 (PM 확정). 분당 한도도 함께.
-        // 내부 요약+파악이 여러 AI 호출이어도 회신 1회로 친다.
+        // 한도 차감 — 호출별 통일 (PM 확정). 일일(합산) + 분당 함께.
         userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
-        // ② 요약(이전 메일 길 때만) + 대화 조립 — conversation 은 BE 가 만들어 모델 재출력 방지(FUNC-Rep-07).
+        // ② 대화 조립 — 정리 원문 그대로(요약 미적용, 요약은 /summary 표시 전용).
+        //    conversation 은 BE 가 만들어 모델 재출력 방지(FUNC-Rep-07).
         List<String> senders = req.mails().stream().map(ReplyAnalysisRequest.Mail::sender).toList();
         String conversation = buildConversation(senders, cleaned);
 
@@ -153,26 +208,12 @@ public class ReplyService {
     }
 
     /**
-     * 파악·작성에 넘길 대화 텍스트 조립. 답장 대상(마지막) 메일은 항상 원문, 이전 메일은 합산이 길면 요약.
-     * 인용에서 복원한 이전 대화는 맨 앞에 덧붙인다. 요약은 별도 AI 호출이라 한도 차감 이후에만 부른다.
+     * 파악·작성에 넘길 대화 텍스트 조립. 정리된 원문 그대로 쓴다(요약 미적용 — 요약은 /summary 표시 전용).
+     * 인용에서 복원한 이전 대화는 맨 앞에 덧붙인다. conversation 은 BE 가 만들어 모델 재출력을 막는다.
      */
     private String buildConversation(List<String> senders, MailCleaner.CleanResult cleaned) {
         List<String> bodies = cleaned.mails();
         int n = bodies.size();
-        List<String> rendered = new ArrayList<>(bodies);
-        boolean[] summarized = new boolean[n];
-
-        if (n > 1) {
-            List<String> older = bodies.subList(0, n - 1);
-            int olderChars = older.stream().mapToInt(String::length).sum();
-            if (olderChars > SUMMARY_THRESHOLD_CHARS) {
-                List<String> summaries = aiClient.summarize(older);
-                for (int i = 0; i < older.size() && i < summaries.size(); i++) {
-                    rendered.set(i, summaries.get(i));
-                    summarized[i] = true;
-                }
-            }
-        }
 
         StringBuilder sb = new StringBuilder();
         if (!cleaned.recoveredContext().isBlank()) {
@@ -181,9 +222,9 @@ public class ReplyService {
         for (int i = 0; i < n; i++) {
             String sender = (i < senders.size() && senders.get(i) != null && !senders.get(i).isBlank())
                     ? senders.get(i) : "(미상)";
-            sb.append('[').append(i + 1).append(']').append(summarized[i] ? " (요약)" : "")
+            sb.append('[').append(i + 1).append(']')
               .append(" 보낸 사람: ").append(sender).append('\n')
-              .append("본문: ").append(rendered.get(i)).append('\n');
+              .append("본문: ").append(bodies.get(i)).append('\n');
         }
         return sb.toString().strip();
     }
@@ -194,8 +235,8 @@ public class ReplyService {
         ensureReplyEnabled();
         User user = loadUser(userId);
         requireMailReadConsent(user.getId());
-        // 일일 1회는 파악 호출에서 이미 차감 — 작성은 분당 가드만 (무상태라 직접 반복 호출 가능하므로).
-        userRateLimiter.consumeMinuteOnly(UserRateLimiter.CATEGORY_REPLY, user.getId());
+        // 한도 차감 — 호출별 통일 (PM 확정). 작성도 일일+분당 함께 차감.
+        userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
         List<AiReplyClient.QuestionAnswer> qas = pairQuestionAnswers(req);
         PromptVersion prompt = activeReplyPrompt(req.receiverType());
