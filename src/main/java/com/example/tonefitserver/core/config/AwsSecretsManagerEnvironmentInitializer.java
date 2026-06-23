@@ -75,9 +75,6 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("GEMINI_CORRECTION_MODEL")) {
                 properties.put("gemini.correction-model", app.get("GEMINI_CORRECTION_MODEL").asText());
             }
-            if (app.hasNonNull("GEMINI_CORRECTION_THINKING_BUDGET")) {
-                properties.put("gemini.correction-thinking-budget", app.get("GEMINI_CORRECTION_THINKING_BUDGET").asText());
-            }
             if (app.hasNonNull("GEMINI_CORRECTION_THINKING_LEVEL")) {
                 properties.put("gemini.correction-thinking-level", app.get("GEMINI_CORRECTION_THINKING_LEVEL").asText());
             }
