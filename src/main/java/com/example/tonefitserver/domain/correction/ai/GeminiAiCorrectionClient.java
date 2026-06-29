@@ -249,12 +249,23 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         body.put("generationConfig", genConfig);
 
         String path = "/models/" + properties.correctionModelOrDefault() + ":generateContent";
-        GeminiResponse response = geminiRestClient.post()
-                .uri(uri -> uri.path(path).build())
-                .header("x-goog-api-key", properties.apiKey())
-                .body(body)
-                .retrieve()
-                .body(GeminiResponse.class);
+        // 폴오버(데드라인·차단기 임계치) 산정용 지연 계측 — 성공뿐 아니라 실패(타임아웃·5xx)·빈결과도
+        // durationMs+outcome 로 남겨 p50/p95 와 실패 패턴을 쌓는다.
+        long start = System.currentTimeMillis();
+        GeminiResponse response;
+        try {
+            response = geminiRestClient.post()
+                    .uri(uri -> uri.path(path).build())
+                    .header("x-goog-api-key", properties.apiKey())
+                    .body(body)
+                    .retrieve()
+                    .body(GeminiResponse.class);
+        } catch (RuntimeException e) {
+            log.info("gemini_call op=correction durationMs={} outcome=error error={}",
+                    System.currentTimeMillis() - start, e.getClass().getSimpleName());
+            throw e;
+        }
+        long durationMs = System.currentTimeMillis() - start;
 
         if (response == null
                 || response.candidates() == null
@@ -262,12 +273,15 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
                 || response.candidates().get(0).content() == null
                 || response.candidates().get(0).content().parts() == null
                 || response.candidates().get(0).content().parts().isEmpty()) {
+            log.info("gemini_call op=correction durationMs={} outcome=empty", durationMs);
             throw new IllegalStateException("Empty or malformed Gemini response");
         }
         String text = response.candidates().get(0).content().parts().get(0).text();
         if (text == null || text.isBlank()) {
+            log.info("gemini_call op=correction durationMs={} outcome=empty", durationMs);
             throw new IllegalStateException("Gemini response text is empty");
         }
+        log.info("gemini_call op=correction durationMs={} outcome=ok", durationMs);
         logUsage("correction", response.usageMetadata());
         return text;
     }
