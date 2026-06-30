@@ -78,6 +78,16 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("GEMINI_CORRECTION_THINKING_LEVEL")) {
                 properties.put("gemini.correction-thinking-level", app.get("GEMINI_CORRECTION_THINKING_LEVEL").asText());
             }
+            // OpenAI(GPT) 폴오버 fallback — 폴오버 활성 시에만 사용. 키·모델 모두 선택(없으면 yaml 기본값).
+            if (app.hasNonNull("OPENAI_API_KEY")) {
+                properties.put("openai.api-key", app.get("OPENAI_API_KEY").asText());
+            }
+            if (app.hasNonNull("OPENAI_GENERATION_MODEL")) {
+                properties.put("openai.generation-model", app.get("OPENAI_GENERATION_MODEL").asText());
+            }
+            if (app.hasNonNull("OPENAI_CORRECTION_MODEL")) {
+                properties.put("openai.correction-model", app.get("OPENAI_CORRECTION_MODEL").asText());
+            }
             // Google OAuth audience(client_id) whitelist — ID token 검증용. 콤마 구분 다중 허용.
             if (app.hasNonNull("GOOGLE_OAUTH_CLIENT_IDS")) {
                 properties.put("google.oauth.client-ids", app.get("GOOGLE_OAUTH_CLIENT_IDS").asText());

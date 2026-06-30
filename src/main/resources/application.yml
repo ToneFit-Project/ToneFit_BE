@@ -56,6 +56,17 @@ jwt:
 
 ai:
   provider: stub
+  # 폴오버(헤지 + 차단기) 활성 스위치. 기본 false → 현행(Gemini 단독) 동작. prod 에서 단계적 활성.
+  failover:
+    enabled: ${AI_FAILOVER_ENABLED:false}
+
+# OpenAI(GPT) 폴오버 fallback. ai.failover.enabled=true 일 때만 사용.
+# 모델 ID 는 PM 확정 전 임시값(구조화 출력 지원 모델). env/AWS Secret 으로 조정.
+openai:
+  api-key: ${OPENAI_API_KEY:}
+  base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+  generation-model: ${OPENAI_GENERATION_MODEL:gpt-4o-mini}
+  correction-model: ${OPENAI_CORRECTION_MODEL:gpt-4o-mini}
 
 gemini:
   api-key: ${GEMINI_API_KEY:}
