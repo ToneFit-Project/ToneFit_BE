@@ -1,5 +1,6 @@
 package com.example.tonefitserver.core.ai;
 
+import com.example.tonefitserver.domain.correction.ai.GeminiProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -13,10 +14,13 @@ import java.util.concurrent.ScheduledExecutorService;
  *
  * <p>공용 인프라: 헤지 타이머용 ScheduledExecutorService(데몬), 기능별 {@link AiCircuitBreaker} 빈.
  * 생성·교정 모델이 달라(2.5/3.5) 실패가 독립적이므로 차단기를 기능별로 분리한다.
+ *
+ * <p>{@link GeminiProperties} 도 여기서 등록한다(멱등) — 폴오버 async Gemini 클라이언트가 의존하는데,
+ * 원 등록처인 GeminiConfig 는 {@code ai.provider=gemini} 게이팅이라 provider 불일치 시 기동이 깨지는 것 방지.
  */
 @Configuration
 @ConditionalOnProperty(name = "ai.failover.enabled", havingValue = "true")
-@EnableConfigurationProperties({OpenAiProperties.class, FailoverProperties.class})
+@EnableConfigurationProperties({OpenAiProperties.class, FailoverProperties.class, GeminiProperties.class})
 public class AiFailoverConfig {
 
     /** 헤지 delay·deadline 타이머 전용. 논블로킹 HTTP 라 소수 스레드로 충분. 데몬 → 종료 방해 안 함. */

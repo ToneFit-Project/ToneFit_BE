@@ -1,6 +1,8 @@
 package com.example.tonefitserver.domain.correction.ai;
 
+import com.example.tonefitserver.core.ai.AiExceptions;
 import com.example.tonefitserver.core.ai.AiHttpTransport;
+import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.OpenAiChatResponse;
 import com.example.tonefitserver.core.ai.OpenAiProperties;
 import com.example.tonefitserver.core.ai.OpenAiRequests;
@@ -33,8 +35,6 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class OpenAiCorrectionClient implements AsyncAiCorrectionClient {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(20);
-
     private static final String DEFAULT_CORRECTION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 교정 어시스턴트입니다.
             입력 본문을 검토해 교정 항목(changes) 배열을 반환하세요. 전체 교정 본문은 서버가 원문 + changes 로 재조립합니다.
@@ -45,6 +45,7 @@ public class OpenAiCorrectionClient implements AsyncAiCorrectionClient {
 
     private final AiHttpTransport transport;
     private final OpenAiProperties properties;
+    private final FailoverProperties failoverProperties;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -68,7 +69,7 @@ public class OpenAiCorrectionClient implements AsyncAiCorrectionClient {
         Map<String, String> headers = Map.of("Authorization", "Bearer " + properties.apiKey());
         long start = System.currentTimeMillis();
 
-        return transport.postJson(uri, headers, body, TIMEOUT)
+        return transport.postJson(uri, headers, body, Duration.ofMillis(failoverProperties.deadlineMs()))
                 .thenApply(responseBody -> {
                     AiCorrectionResult result = parse(responseBody, safeOriginal, protectedRanges);
                     log.info("gpt_call op=correction durationMs={} outcome=ok", System.currentTimeMillis() - start);
@@ -76,7 +77,7 @@ public class OpenAiCorrectionClient implements AsyncAiCorrectionClient {
                 })
                 .exceptionallyCompose(ex -> {
                     log.info("gpt_call op=correction durationMs={} outcome=error error={}",
-                            System.currentTimeMillis() - start, ex.getClass().getSimpleName());
+                            System.currentTimeMillis() - start, AiExceptions.typeName(ex));
                     return CompletableFuture.failedFuture(ex);
                 });
     }

@@ -49,7 +49,10 @@ public class GeminiAiGenerationClient implements AiGenerationClient {
     public AiGenerationResult generate(String promptContent, Receiver receiver, Purpose purpose, String briefContent) {
         String system = (promptContent == null || promptContent.isBlank())
                 ? DEFAULT_GENERATION_SYSTEM_PROMPT : promptContent;
-        String user = buildUserMessage(receiver, purpose, briefContent == null ? "" : briefContent);
+        // 입력 형식([Receiver]/[Purpose]/[BriefContent])은 GenerationMessages 로 단일화(Gemini sync/async·OpenAI 공용).
+        // 수신자 유형은 DB prompt 가 recipient-specific 이라 redundant 지만 DEFAULT(generic) fallback 용으로 함께 보내고,
+        // 목적은 Purpose enum 값을 그대로 전달한다(prompt 의 목적별 구조 규칙이 동일 enum 키 사용).
+        String user = GenerationMessages.buildUserMessage(receiver, purpose, briefContent == null ? "" : briefContent);
         String json = callAndExtract(system, user, generationSchema());
 
         try {
@@ -57,16 +60,6 @@ public class GeminiAiGenerationClient implements AiGenerationClient {
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse Gemini generation response: " + json, e);
         }
-    }
-
-    private String buildUserMessage(Receiver receiver, Purpose purpose, String briefContent) {
-        // PM 생성 prompt 의 입력 형식([Receiver]/[Purpose]/[BriefContent])에 정렬. 수신자 유형은
-        // DB prompt 가 recipient-specific 이라 redundant 지만, DEFAULT(generic) fallback 을 위해 함께 보낸다.
-        // 목적은 Purpose enum 값(NOTICE/REQUEST/THANKS/APOLOGY/DECLINE/REPORT)을 그대로 전달 —
-        // prompt 의 목적별 구조 규칙이 동일 enum 키를 사용한다(REPLY 는 회신 모드 전용이라 생성 대상 아님).
-        return "수신자 유형: " + receiver + '\n'
-                + "목적: " + purpose + '\n'
-                + "상황: " + briefContent;
     }
 
     private String callAndExtract(String systemInstruction, String userText, Map<String, Object> schema) {
