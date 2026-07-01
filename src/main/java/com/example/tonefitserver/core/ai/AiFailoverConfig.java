@@ -31,6 +31,15 @@ public class AiFailoverConfig {
 
     @Bean
     public AiCircuitBreaker generationCircuitBreaker(FailoverProperties properties) {
+        return newBreaker(properties);
+    }
+
+    @Bean
+    public AiCircuitBreaker correctionCircuitBreaker(FailoverProperties properties) {
+        return newBreaker(properties);
+    }
+
+    private AiCircuitBreaker newBreaker(FailoverProperties properties) {
         FailoverProperties.Circuit circuit = properties.circuit();
         return new AiCircuitBreaker(circuit.failureThreshold(), circuit.windowMs(), circuit.openMs(),
                 System::currentTimeMillis);
