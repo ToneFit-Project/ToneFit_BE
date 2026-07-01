@@ -11,9 +11,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,24 +18,14 @@ import java.util.Map;
 /**
  * Gemini structured output 기반 교정 클라이언트. v0.5 부터 교정 단일 메서드만 유지.
  *
- * <p>구조 교정 / 최종 다듬기 (finalizePolish) / 제목 생성 로직은 제거. 입력은 보호 구간 마커
- * (⟦…⟧) 로 감싸진 본문 + receiver/purpose. 응답은 changes 배열 (corrected_email 미발화 — 토큰 절감).
- *
- * <p>응답 후처리:
- * <ul>
- *   <li>각 change 의 original 을 원문에서 indexOf 로 위치 탐색 (cursor 순서 + 공백 무시 fallback)</li>
- *   <li>보호 구간 침범 시 drop</li>
- *   <li>마커 문자(⟦/⟧) 응답에 섞여 있을 가능성 차단 차원에서 strip</li>
- * </ul>
+ * <p>입력은 보호 구간 마커(⟦…⟧)로 감싸진 본문 + receiver/purpose. 응답은 reasoning(선행 CoT, 폐기) +
+ * changes 배열. 마커 삽입·changes 정제(위치 탐색·보호 구간 drop)는 {@link CorrectionSupport} 공용 로직.
  */
 @Slf4j
 @Component
 @ConditionalOnProperty(name = "ai.provider", havingValue = "gemini")
 @RequiredArgsConstructor
 public class GeminiAiCorrectionClient implements AiCorrectionClient {
-
-    private static final String START_MARKER = "⟦";
-    private static final String END_MARKER = "⟧";
 
     private static final String DEFAULT_CORRECTION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 교정 어시스턴트입니다.
@@ -77,158 +64,23 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
                                       String original, List<Range> protectedRanges) {
         String system = (promptContent == null || promptContent.isBlank())
                 ? DEFAULT_CORRECTION_SYSTEM_PROMPT : promptContent;
-        String preparedOriginal = insertMarkers(original == null ? "" : original, protectedRanges);
-        String user = buildCorrectionUserMessage(receiver, purpose, preparedOriginal);
+        String safeOriginal = original == null ? "" : original;
+        String preparedOriginal = CorrectionSupport.insertMarkers(safeOriginal, protectedRanges);
+        String user = CorrectionSupport.buildUserMessage(receiver, purpose, preparedOriginal);
         String json = callAndExtract(system, user, correctionSchema());
 
-        // reasoning(선행 CoT) + changes 로 파싱. reasoning 은 과교정 방지용 사고 과정일 뿐
-        // 폐기한다 — 메일 내용이 섞일 수 있어 로깅·노출·영속 금지(내용 위생). changes 만 다음 단계로.
-        CorrectionRaw raw;
+        // reasoning(선행 CoT)은 과교정 방지용 사고 과정 — 폐기(메일 내용 섞일 수 있어 로깅·노출·영속 금지). changes 만.
+        CorrectionSupport.CorrectionRaw raw;
         try {
-            raw = objectMapper.readValue(json, CorrectionRaw.class);
+            raw = objectMapper.readValue(json, CorrectionSupport.CorrectionRaw.class);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse Gemini correction response: " + json, e);
         }
 
-        List<AiCorrectionResult.Change> cleanedChanges = sanitizeChanges(
-                original == null ? "" : original, protectedRanges, raw.changes());
+        List<AiCorrectionResult.Change> cleanedChanges =
+                CorrectionSupport.sanitizeChanges(safeOriginal, protectedRanges, raw.changes());
         return new AiCorrectionResult(cleanedChanges);
     }
-
-    // === 송신 변환 ===
-
-    private String insertMarkers(String text, List<Range> ranges) {
-        if (ranges == null || ranges.isEmpty()) return text;
-        // start 내림차순으로 뒤에서부터 삽입 → 앞쪽 오프셋 유지
-        List<Range> sorted = new ArrayList<>(ranges);
-        sorted.sort(Comparator.comparingInt(Range::getStart).reversed());
-
-        StringBuilder sb = new StringBuilder(text);
-        for (Range r : sorted) {
-            int start = r.getStart();
-            int end = r.getEnd();
-            if (start < 0 || end > sb.length() || start >= end) {
-                log.warn("Skipping invalid protected range: start={}, end={}, textLen={}",
-                        start, end, sb.length());
-                continue;
-            }
-            sb.insert(end, END_MARKER);
-            sb.insert(start, START_MARKER);
-        }
-        return sb.toString();
-    }
-
-    // === 수신 변환 ===
-
-    private String restoreFromAi(String aiText) {
-        if (aiText == null) return null;
-        return aiText
-                .replace(START_MARKER, "")
-                .replace(END_MARKER, "");
-    }
-
-    private List<AiCorrectionResult.Change> sanitizeChanges(String original,
-                                                            List<Range> protectedRanges,
-                                                            List<AiCorrectionResult.Change> changes) {
-        if (changes == null) return List.of();
-        List<AiCorrectionResult.Change> result = new ArrayList<>();
-        int cursor = 0;
-
-        for (AiCorrectionResult.Change ch : changes) {
-            String cleanOriginal = restoreFromAi(ch.original());
-            String cleanCorrected = restoreFromAi(ch.corrected());
-            String cleanReason = restoreFromAi(ch.reason());
-
-            if (cleanOriginal == null || cleanOriginal.isEmpty()) {
-                log.warn("Dropping change (empty or null original): index={}", ch.index());
-                continue;
-            }
-
-            int[] range = findOriginalRange(original, cleanOriginal, cursor);
-            if (range == null) {
-                log.warn("Dropping change (original text not found in source): '{}'", cleanOriginal);
-                continue;
-            }
-            int start = range[0];
-            int end = range[1];
-
-            if (overlapsProtected(start, end, protectedRanges)) {
-                log.warn("Dropping change (overlaps protected range): [{},{})", start, end);
-                continue;
-            }
-
-            cursor = end;
-            // 원문에서 실제로 발췌한 substring 을 사용 — Gemini 가 공백 normalize 등을 했어도
-            // UI/머지에는 사용자가 실제로 입력한 형태가 들어가야 함.
-            String actualOriginal = original.substring(start, end);
-            result.add(new AiCorrectionResult.Change(
-                    result.size(), start, end,
-                    actualOriginal, cleanCorrected, cleanReason,
-                    ch.label(), ch.confidence(), ch.appliedRules()));
-        }
-        return result;
-    }
-
-    /**
-     * 원문에서 target 의 위치를 찾는다. 단계별 fallback:
-     *   1) 정확 매칭 — cursor 이후
-     *   2) 정확 매칭 — 처음부터 (Gemini 가 순서를 어겼거나 앞쪽 매칭일 때)
-     *   3) 공백-tolerant 매칭 — Gemini 가 'executivesummary' 같은 입력을 'executive summary' 로
-     *      normalize 해서 보고하는(또는 그 역방향) 케이스 복구
-     * 못 찾으면 null.
-     */
-    private int[] findOriginalRange(String source, String target, int cursor) {
-        int found = source.indexOf(target, cursor);
-        if (found >= 0) return new int[]{found, found + target.length()};
-
-        found = source.indexOf(target);
-        if (found >= 0) {
-            log.debug("Change out of document order, matched via full scan: '{}'", target);
-            return new int[]{found, found + target.length()};
-        }
-
-        // 공백-tolerant 매칭: 양쪽 모두에서 모든 whitespace 를 제거 후 비교.
-        // target 자체에 whitespace 가 없거나 전부 whitespace 면 의미 없으므로 skip.
-        String targetNoWs = target.replaceAll("\\s+", "");
-        if (targetNoWs.isEmpty() || targetNoWs.length() == target.length()) return null;
-
-        StripResult ws = stripWhitespace(source);
-        int normPos = ws.stripped().indexOf(targetNoWs);
-        if (normPos < 0) return null;
-
-        int actualStart = ws.map()[normPos];
-        int actualEnd = ws.map()[normPos + targetNoWs.length() - 1] + 1;
-        log.debug("Recovered via whitespace-tolerant match: '{}' -> [{},{})", target, actualStart, actualEnd);
-        return new int[]{actualStart, actualEnd};
-    }
-
-    /** 공백을 제거한 문자열 + 각 char 가 원문에서 어느 인덱스였는지 매핑. */
-    private StripResult stripWhitespace(String s) {
-        StringBuilder sb = new StringBuilder(s.length());
-        int[] map = new int[s.length()];
-        int j = 0;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (!Character.isWhitespace(c)) {
-                sb.append(c);
-                map[j++] = i;
-            }
-        }
-        return new StripResult(sb.toString(), Arrays.copyOf(map, j));
-    }
-
-    private record StripResult(String stripped, int[] map) {
-    }
-
-    private boolean overlapsProtected(int start, int end, List<Range> ranges) {
-        if (ranges == null) return false;
-        for (Range r : ranges) {
-            if (start < r.getEnd() && r.getStart() < end) return true;
-        }
-        return false;
-    }
-
-    // === 요청/응답 공통 ===
 
     private String callAndExtract(String systemInstruction, String userText, Map<String, Object> schema) {
         Map<String, Object> body = new LinkedHashMap<>();
@@ -293,36 +145,11 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
                 op, usage.promptTokenCount(), usage.candidatesTokenCount(), usage.totalTokenCount());
     }
 
-    private String buildCorrectionUserMessage(Receiver receiver, Purpose purpose, String preparedOriginal) {
-        return "[Receiver] " + receiver + '\n'
-                + "[Purpose] " + purpose + '\n'
-                + "[OriginalEmail]\n" + preparedOriginal;
-    }
-
     private Map<String, Object> correctionSchema() {
-        Map<String, Object> changeProps = new LinkedHashMap<>();
-        changeProps.put("index", Map.of("type", "integer"));
-        changeProps.put("original", Map.of("type", "string"));
-        changeProps.put("corrected", Map.of("type", "string"));
-        changeProps.put("reason", Map.of("type", "string"));
-        changeProps.put("label", Map.of("type", "string", "enum", List.of("AUTO", "SUGGEST", "STYLE")));
-        changeProps.put("confidence", Map.of("type", "number"));
-        changeProps.put("applied_rules", Map.of(
-                "type", "array",
-                "items", Map.of("type", "string")
-        ));
-
-        Map<String, Object> changeItem = new LinkedHashMap<>();
-        changeItem.put("type", "object");
-        changeItem.put("properties", changeProps);
-        changeItem.put("required", List.of("index", "original", "corrected",
-                "reason", "label", "confidence", "applied_rules"));
-
         Map<String, Object> rootProps = new LinkedHashMap<>();
         // reasoning 을 changes 보다 먼저 — autoregressive 생성에서 사고가 changes 출력을 조건짓도록(과교정 방지 CoT).
         rootProps.put("reasoning", Map.of("type", "string"));
-        // corrected_email 제거 — 서버가 원문 + changes 로 재조립하므로 Gemini 출력 토큰 절약.
-        rootProps.put("changes", Map.of("type", "array", "items", changeItem));
+        rootProps.put("changes", Map.of("type", "array", "items", CorrectionSupport.changeItemSchema()));
 
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
@@ -331,10 +158,6 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
         root.put("propertyOrdering", List.of("reasoning", "changes"));
         root.put("required", List.of("reasoning", "changes"));
         return root;
-    }
-
-    /** Gemini 교정 응답 파싱용 — reasoning(선행 CoT, 폐기) + changes. */
-    private record CorrectionRaw(String reasoning, List<AiCorrectionResult.Change> changes) {
     }
 
     private record GeminiResponse(

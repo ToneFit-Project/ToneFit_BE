@@ -1,7 +1,9 @@
 package com.example.tonefitserver.domain.generation.ai;
 
 import com.example.tonefitserver.core.ai.AiHttpTransport;
+import com.example.tonefitserver.core.ai.OpenAiChatResponse;
 import com.example.tonefitserver.core.ai.OpenAiProperties;
+import com.example.tonefitserver.core.ai.OpenAiRequests;
 import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +58,8 @@ public class OpenAiGenerationClient implements AsyncAiGenerationClient {
 
         String body;
         try {
-            body = objectMapper.writeValueAsString(buildRequestBody(system, user));
+            body = objectMapper.writeValueAsString(
+                    OpenAiRequests.chatJsonSchema(properties.generationModel(), system, user, "generation", generationSchema()));
         } catch (Exception e) {
             return CompletableFuture.failedFuture(e);
         }
@@ -85,21 +88,6 @@ public class OpenAiGenerationClient implements AsyncAiGenerationClient {
                 + "상황: " + briefContent;
     }
 
-    private Map<String, Object> buildRequestBody(String system, String user) {
-        Map<String, Object> jsonSchema = new LinkedHashMap<>();
-        jsonSchema.put("name", "generation");
-        jsonSchema.put("strict", true);
-        jsonSchema.put("schema", generationSchema());
-
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", properties.generationModel());
-        body.put("messages", List.of(
-                Map.of("role", "system", "content", system),
-                Map.of("role", "user", "content", user)));
-        body.put("response_format", Map.of("type", "json_schema", "json_schema", jsonSchema));
-        return body;
-    }
-
     private Map<String, Object> generationSchema() {
         Map<String, Object> props = new LinkedHashMap<>();
         props.put("generated_subject", Map.of("type", "string"));
@@ -115,12 +103,8 @@ public class OpenAiGenerationClient implements AsyncAiGenerationClient {
 
     private AiGenerationResult parse(String httpBody) {
         try {
-            OpenAiResponse response = objectMapper.readValue(httpBody, OpenAiResponse.class);
-            if (response == null || response.choices() == null || response.choices().isEmpty()
-                    || response.choices().get(0).message() == null) {
-                throw new IllegalStateException("Empty or malformed OpenAI response");
-            }
-            String content = response.choices().get(0).message().content();
+            OpenAiChatResponse response = objectMapper.readValue(httpBody, OpenAiChatResponse.class);
+            String content = response == null ? null : response.firstContent();
             if (content == null || content.isBlank()) {
                 throw new IllegalStateException("OpenAI response content is empty");
             }
@@ -129,15 +113,6 @@ public class OpenAiGenerationClient implements AsyncAiGenerationClient {
             throw e;
         } catch (Exception e) {
             throw new IllegalStateException("Failed to parse OpenAI generation response: " + httpBody, e);
-        }
-    }
-
-    /** OpenAI Chat Completions 응답 — 전역 SNAKE_CASE 매퍼로 매핑(전 필드 단일 단어). */
-    private record OpenAiResponse(List<Choice> choices) {
-        private record Choice(Message message) {
-        }
-
-        private record Message(String content) {
         }
     }
 }
