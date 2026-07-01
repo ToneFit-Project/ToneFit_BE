@@ -68,12 +68,13 @@ ai:
       open-ms: ${AI_FAILOVER_CIRCUIT_OPEN_MS:1800000}
 
 # OpenAI(GPT) 폴오버 fallback. ai.failover.enabled=true 일 때만 사용.
-# 모델 ID 는 PM 확정 전 임시값(구조화 출력 지원 모델). env/AWS Secret 으로 조정.
+# api-key 는 시크릿 → AWS Secrets Manager(OPENAI_API_KEY) 필수. 모델은 PM 확정값(gpt-4.1-mini)을
+# 기본값으로 박음 — env/AWS Secret(OPENAI_*_MODEL)로 재배포 없이 변경 가능(선택).
 openai:
   api-key: ${OPENAI_API_KEY:}
   base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
-  generation-model: ${OPENAI_GENERATION_MODEL:gpt-4o-mini}
-  correction-model: ${OPENAI_CORRECTION_MODEL:gpt-4o-mini}
+  generation-model: ${OPENAI_GENERATION_MODEL:gpt-4.1-mini}
+  correction-model: ${OPENAI_CORRECTION_MODEL:gpt-4.1-mini}
 
 gemini:
   api-key: ${GEMINI_API_KEY:}
