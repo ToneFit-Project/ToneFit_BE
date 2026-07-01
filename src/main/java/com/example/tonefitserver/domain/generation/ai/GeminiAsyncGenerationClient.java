@@ -1,6 +1,8 @@
 package com.example.tonefitserver.domain.generation.ai;
 
+import com.example.tonefitserver.core.ai.AiExceptions;
 import com.example.tonefitserver.core.ai.AiHttpTransport;
+import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.GeminiApiResponse;
 import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
@@ -31,9 +33,6 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class GeminiAsyncGenerationClient implements AsyncAiGenerationClient {
 
-    /** primary(Gemini) 호출 타임아웃 — 전체 데드라인(30s)과 정렬. */
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-
     private static final String DEFAULT_GENERATION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일을 작성해주는 어시스턴트입니다.
             수신자 유형과 목적, 사용자가 제공한 간략 내용(상황)을 바탕으로
@@ -45,6 +44,7 @@ public class GeminiAsyncGenerationClient implements AsyncAiGenerationClient {
 
     private final AiHttpTransport transport;
     private final GeminiProperties properties;
+    private final FailoverProperties failoverProperties;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -52,7 +52,7 @@ public class GeminiAsyncGenerationClient implements AsyncAiGenerationClient {
                                                                Purpose purpose, String briefContent) {
         String system = (promptContent == null || promptContent.isBlank())
                 ? DEFAULT_GENERATION_SYSTEM_PROMPT : promptContent;
-        String user = buildUserMessage(receiver, purpose, briefContent == null ? "" : briefContent);
+        String user = GenerationMessages.buildUserMessage(receiver, purpose, briefContent == null ? "" : briefContent);
 
         String body;
         try {
@@ -66,7 +66,7 @@ public class GeminiAsyncGenerationClient implements AsyncAiGenerationClient {
         Map<String, String> headers = Map.of("x-goog-api-key", properties.apiKey());
         long start = System.currentTimeMillis();
 
-        return transport.postJson(uri, headers, body, TIMEOUT)
+        return transport.postJson(uri, headers, body, Duration.ofMillis(failoverProperties.deadlineMs()))
                 .thenApply(responseBody -> {
                     AiGenerationResult result = parse(responseBody);
                     log.info("gemini_call op=generation mode=async durationMs={} outcome=ok",
@@ -75,17 +75,9 @@ public class GeminiAsyncGenerationClient implements AsyncAiGenerationClient {
                 })
                 .exceptionallyCompose(ex -> {
                     log.info("gemini_call op=generation mode=async durationMs={} outcome=error error={}",
-                            System.currentTimeMillis() - start, ex.getClass().getSimpleName());
+                            System.currentTimeMillis() - start, AiExceptions.typeName(ex));
                     return CompletableFuture.failedFuture(ex);
                 });
-    }
-
-    // --- 동기 GeminiAiGenerationClient 와 일치(변경 시 함께) ---
-
-    private String buildUserMessage(Receiver receiver, Purpose purpose, String briefContent) {
-        return "수신자 유형: " + receiver + '\n'
-                + "목적: " + purpose + '\n'
-                + "상황: " + briefContent;
     }
 
     private Map<String, Object> buildRequestBody(String system, String user) {

@@ -1,6 +1,7 @@
 package com.example.tonefitserver.domain.generation.ai;
 
 import com.example.tonefitserver.core.ai.AiHttpTransport;
+import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.OpenAiProperties;
 import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
@@ -34,6 +35,9 @@ class OpenAiGenerationClientTest {
             .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
             .build();
 
+    private static final FailoverProperties FAILOVER =
+            new FailoverProperties(true, 10_000, 30_000, new FailoverProperties.Circuit(5, 3_600_000L, 1_800_000L));
+
     @Test
     @DisplayName("응답 content(내부 JSON)를 AiGenerationResult 로 파싱한다")
     void parsesResult() throws Exception {
@@ -45,7 +49,7 @@ class OpenAiGenerationClientTest {
                 .thenReturn(CompletableFuture.completedFuture(canned));
 
         OpenAiGenerationClient client = new OpenAiGenerationClient(
-                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), mapper);
+                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
 
         AiGenerationResult result = client.generateAsync("system prompt", Receiver.DIRECT_SUPERVISOR,
                 Purpose.NOTICE, "상황 내용").get(2, TimeUnit.SECONDS);
@@ -66,7 +70,7 @@ class OpenAiGenerationClientTest {
                 .thenReturn(CompletableFuture.completedFuture(canned));
 
         OpenAiGenerationClient client = new OpenAiGenerationClient(
-                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), mapper);
+                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
         client.generateAsync(null, Receiver.CLIENT, Purpose.REQUEST, "견적 요청").get(2, TimeUnit.SECONDS);
 
         JsonNode body = mapper.readTree(bodyCaptor.getValue());
@@ -86,7 +90,7 @@ class OpenAiGenerationClientTest {
                 .thenReturn(CompletableFuture.completedFuture("{\"choices\":[]}"));
 
         OpenAiGenerationClient client = new OpenAiGenerationClient(
-                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), mapper);
+                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
 
         assertThat(client.generateAsync("s", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "x"))
                 .isCompletedExceptionally();

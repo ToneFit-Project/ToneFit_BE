@@ -1,6 +1,8 @@
 package com.example.tonefitserver.domain.correction.ai;
 
+import com.example.tonefitserver.core.ai.AiExceptions;
 import com.example.tonefitserver.core.ai.AiHttpTransport;
+import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.GeminiApiResponse;
 import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
@@ -29,8 +31,6 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class GeminiAsyncCorrectionClient implements AsyncAiCorrectionClient {
 
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
-
     private static final String DEFAULT_CORRECTION_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 교정 어시스턴트입니다.
             입력 본문을 검토해 교정 항목(changes) 배열을 반환하세요. 전체 교정 본문은 서버가 원문 + changes 로 재조립합니다.
@@ -41,6 +41,7 @@ public class GeminiAsyncCorrectionClient implements AsyncAiCorrectionClient {
 
     private final AiHttpTransport transport;
     private final GeminiProperties properties;
+    private final FailoverProperties failoverProperties;
     private final ObjectMapper objectMapper;
 
     @Override
@@ -64,7 +65,7 @@ public class GeminiAsyncCorrectionClient implements AsyncAiCorrectionClient {
         Map<String, String> headers = Map.of("x-goog-api-key", properties.apiKey());
         long start = System.currentTimeMillis();
 
-        return transport.postJson(uri, headers, body, TIMEOUT)
+        return transport.postJson(uri, headers, body, Duration.ofMillis(failoverProperties.deadlineMs()))
                 .thenApply(responseBody -> {
                     AiCorrectionResult result = parse(responseBody, safeOriginal, protectedRanges);
                     log.info("gemini_call op=correction mode=async durationMs={} outcome=ok",
@@ -73,7 +74,7 @@ public class GeminiAsyncCorrectionClient implements AsyncAiCorrectionClient {
                 })
                 .exceptionallyCompose(ex -> {
                     log.info("gemini_call op=correction mode=async durationMs={} outcome=error error={}",
-                            System.currentTimeMillis() - start, ex.getClass().getSimpleName());
+                            System.currentTimeMillis() - start, AiExceptions.typeName(ex));
                     return CompletableFuture.failedFuture(ex);
                 });
     }

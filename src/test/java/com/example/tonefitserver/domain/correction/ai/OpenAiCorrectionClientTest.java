@@ -1,6 +1,7 @@
 package com.example.tonefitserver.domain.correction.ai;
 
 import com.example.tonefitserver.core.ai.AiHttpTransport;
+import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.OpenAiProperties;
 import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
@@ -33,6 +34,9 @@ class OpenAiCorrectionClientTest {
             .propertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE)
             .build();
 
+    private static final FailoverProperties FAILOVER =
+            new FailoverProperties(true, 10_000, 30_000, new FailoverProperties.Circuit(5, 3_600_000L, 1_800_000L));
+
     @Test
     @DisplayName("응답의 changes 를 파싱·정제해 원문 위치가 채워진 결과 반환")
     void parsesAndSanitizes() throws Exception {
@@ -53,7 +57,7 @@ class OpenAiCorrectionClientTest {
                 .thenReturn(CompletableFuture.completedFuture(canned));
 
         OpenAiCorrectionClient client = new OpenAiCorrectionClient(
-                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), mapper);
+                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
 
         AiCorrectionResult result = client.correctAsync("system", Receiver.DIRECT_SUPERVISOR,
                 Purpose.NOTICE, "안녕하세요. 회신 바랍니다.", null).get(2, TimeUnit.SECONDS);
@@ -72,7 +76,7 @@ class OpenAiCorrectionClientTest {
                 .thenReturn(CompletableFuture.completedFuture("{\"choices\":[]}"));
 
         OpenAiCorrectionClient client = new OpenAiCorrectionClient(
-                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), mapper);
+                transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
 
         assertThat(client.correctAsync("s", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "안녕하세요.", null))
                 .isCompletedExceptionally();
