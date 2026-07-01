@@ -57,8 +57,15 @@ jwt:
 ai:
   provider: stub
   # 폴오버(헤지 + 차단기) 활성 스위치. 기본 false → 현행(Gemini 단독) 동작. prod 에서 단계적 활성.
+  # 임계값은 #59 지연 데이터로 확정 예정 — 우선 PM 협의 임시값(헤지 10s / 데드라인 30s / 1h 5건 → 30분).
   failover:
     enabled: ${AI_FAILOVER_ENABLED:false}
+    hedge-delay-ms: ${AI_FAILOVER_HEDGE_DELAY_MS:10000}
+    deadline-ms: ${AI_FAILOVER_DEADLINE_MS:30000}
+    circuit:
+      failure-threshold: ${AI_FAILOVER_CIRCUIT_FAILURES:5}
+      window-ms: ${AI_FAILOVER_CIRCUIT_WINDOW_MS:3600000}
+      open-ms: ${AI_FAILOVER_CIRCUIT_OPEN_MS:1800000}
 
 # OpenAI(GPT) 폴오버 fallback. ai.failover.enabled=true 일 때만 사용.
 # 모델 ID 는 PM 확정 전 임시값(구조화 출력 지원 모델). env/AWS Secret 으로 조정.
