@@ -53,7 +53,7 @@ import java.util.stream.Collectors;
  * 점검 issue 의 detail 도 내용이 섞일 수 있어 재작성 프롬프트로만 쓰고 로그엔 type 만.
  *
  * <p>게이트 (PM 확정): 킬스위치({@code reply.enabled}, FUNC-Lim-10) → MAIL_READ 동의(FUNC-Ag-08,
- * 회신만 차단) → 계정 한도(일일·분당 모두 호출별 차감으로 통일 — 요약·파악·작성 각 1회) →
+ * 회신만 차단) → 계정 한도(회신 1건당 1회 — 파악에서 일일+분당 차감, 요약 미차감, 작성 분당 가드만) →
  * 정리 후 본문 합산 20,000자 초과 시 CONTENT_TOO_LONG.
  *
  * <p>Phase C: reply 메타데이터·이벤트, 잔여 에러 세분화(한국어 감지 등), 비용 경보.
@@ -107,7 +107,8 @@ public class ReplyService {
             throw new BusinessException(ErrorType.EMPTY_THREAD);
         }
 
-        userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
+        // 요약은 계정 한도를 차감하지 않는다 — 회신 1건의 차감은 파악(analyze)에서 1회만(요약과 병행 호출이라
+        // 여기서 또 차감하면 이중). 요약은 표시 전용·저가 모델이고, 남용은 킬스위치·MAIL_READ·IP 레이트리밋으로 방어.
 
         List<String> senders = req.mails().stream().map(ReplyAnalysisRequest.Mail::sender).toList();
         long start = System.currentTimeMillis();
@@ -158,7 +159,8 @@ public class ReplyService {
             throw new BusinessException(ErrorType.EMPTY_THREAD);
         }
 
-        // 한도 차감 — 호출별 통일 (PM 확정). 일일(합산) + 분당 함께.
+        // 회신 1건의 계정 한도 차감은 여기(파악) 한 번만 — 일일(합산) + 분당(회신). 요약 미차감, 작성은 분당 가드만.
+        // 무상태라 파악이 회신 흐름의 단일 앵커. (여러 AI 호출로 이뤄져도 회신 1회로 친다.)
         userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
         // ② 대화 조립 — 정리 원문 그대로(요약 미적용, 요약은 /summary 표시 전용).
@@ -235,8 +237,8 @@ public class ReplyService {
         ensureReplyEnabled();
         User user = loadUser(userId);
         requireMailReadConsent(user.getId());
-        // 한도 차감 — 호출별 통일 (PM 확정). 작성도 일일+분당 함께 차감.
-        userRateLimiter.consume(UserRateLimiter.CATEGORY_REPLY, user.getId());
+        // 일일은 파악에서 이미 1회 차감 — 작성은 분당 가드만(무상태라 메인 모델 직접 반복 방어). 일일 이중 차감 방지.
+        userRateLimiter.consumeMinuteOnly(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
         List<AiReplyClient.QuestionAnswer> qas = pairQuestionAnswers(req);
         PromptVersion prompt = activeReplyPrompt(req.receiverType());

@@ -20,8 +20,10 @@ import java.time.Duration;
  *   <li><b>분당 한도는 카테고리별 독립</b> — 교정·생성 {@code perMinute}, 회신은 따로 더 낮게
  *       {@code replyPerMinute} (FUNC-Lim-09)</li>
  *   <li>데모(웹, 토큰 없음)는 호출하지 않음 — 서비스 계층에서 userId == null 이면 skip</li>
- *   <li>AI 호출 직전에 차감 → 성공·실패 무관하게 1회 카운트 (FUNC-Lim-06).
- *       회신은 호출별 차감으로 통일 — 요약·파악·작성 각 1회 (PM 확정 v0.58, 재설계로 변경)</li>
+ *   <li>AI 호출 직전에 차감 → 성공·실패 무관하게 1회 카운트 (FUNC-Lim-06).</li>
+ *   <li><b>회신은 1건당 1회만 차감</b> — 파악(analyze)에서 일일+분당 1회. 요약은 미차감(표시 전용·병행 호출),
+ *       작성은 분당 가드만({@link #consumeMinuteOnly}). 요약·파악·작성 각각 차감하면 1건이 한도를 3배로 갉아먹어
+ *       되돌림(v0.58 호출별 차감 → 파악 1회 차감).</li>
  * </ul>
  *
  * <p><b>저장소</b>: Caffeine + Bucket4j in-memory. 단일 인스턴스 가정 (IP RateLimitFilter 와 동일 전제).
@@ -77,6 +79,16 @@ public class UserRateLimiter {
         Bucket dailyBucket = buckets.get("daily:" + userId, k -> newDailyBucket());
         if (!dailyBucket.tryConsume(1)) {
             minuteBucket.addTokens(1);
+            throw new BusinessException(ErrorType.USER_RATE_LIMITED);
+        }
+    }
+
+    /**
+     * 분당 한도만 차감 — 회신 작성 호출용. 회신 1건의 일일 차감은 파악(analyze)에서 1회만 하고(요약은 미차감),
+     * 작성은 무상태라 메인 모델을 직접 반복 호출할 수 있으므로 분당 가드만 둔다. (일일 이중 차감 방지)
+     */
+    public void consumeMinuteOnly(String category, Long userId) {
+        if (!minuteBucket(category, userId).tryConsume(1)) {
             throw new BusinessException(ErrorType.USER_RATE_LIMITED);
         }
     }

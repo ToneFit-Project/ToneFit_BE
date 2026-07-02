@@ -88,6 +88,16 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("OPENAI_CORRECTION_MODEL")) {
                 properties.put("openai.correction-model", app.get("OPENAI_CORRECTION_MODEL").asText());
             }
+            // 계정 단위 한도 — 모두 선택(없으면 application.yml 기본값). 재배포 없이 AWS 에서 조정(FUNC-Lim-03).
+            if (app.hasNonNull("USER_LIMIT_DAILY")) {
+                properties.put("limit.user.daily", app.get("USER_LIMIT_DAILY").asText());
+            }
+            if (app.hasNonNull("USER_LIMIT_PER_MINUTE")) {
+                properties.put("limit.user.per-minute", app.get("USER_LIMIT_PER_MINUTE").asText());
+            }
+            if (app.hasNonNull("USER_REPLY_LIMIT_PER_MINUTE")) {
+                properties.put("limit.user.reply-per-minute", app.get("USER_REPLY_LIMIT_PER_MINUTE").asText());
+            }
             // Google OAuth audience(client_id) whitelist — ID token 검증용. 콤마 구분 다중 허용.
             if (app.hasNonNull("GOOGLE_OAUTH_CLIENT_IDS")) {
                 properties.put("google.oauth.client-ids", app.get("GOOGLE_OAUTH_CLIENT_IDS").asText());

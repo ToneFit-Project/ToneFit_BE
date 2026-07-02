@@ -28,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
  *   <li>POST /api/v1/replies — 작성 호출 (⑤작성~⑥점검, 사용자 입력 후). 201</li>
  * </ul>
  *
- * <p>한도(PM 확정): 일일·분당 모두 호출별 차감으로 통일 — 요약·파악·작성 각 1회.
+ * <p>한도: 회신 1건당 1회 차감 — 파악(analysis)에서 일일+분당. 요약 미차감, 작성은 분당 가드만.
  */
 @RestController
 @RequestMapping("/api/v1/replies")
