@@ -46,7 +46,15 @@ public record ReplyDraftRequest(
         /* 그 밖에 전하고 싶은 말 (선택) — 질문 유무와 무관하게 항상 옵션 */
         @Size(max = 1_000) String extraMessage
 ) {
-    public record Question(int id, @NotBlank @Size(max = 500) String text) {
+    /**
+     * 파악 응답의 질문 회송 — 필드명은 파악 응답({@code {id, question, mail_order}})과 동일해야
+     * FE 가 응답을 그대로 되보낼 수 있다(FUNC-Rep-07). 구 필드명 {@code text} 는 회송 계약 불일치로
+     * 400("공백일 수 없습니다")을 유발해 {@code question} 으로 정정. {@code mailOrder} 는 회송 허용용(작성 미사용).
+     */
+    public record Question(int id,
+                           @NotBlank(message = "질문 내용은 필수입니다.")
+                           @Size(max = 500) String question,
+                           Integer mailOrder) {
     }
 
     /**

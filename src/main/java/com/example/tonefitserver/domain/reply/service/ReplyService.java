@@ -326,7 +326,7 @@ public class ReplyService {
 
         Map<Integer, String> questionById = questions.stream()
                 .collect(Collectors.toMap(ReplyDraftRequest.Question::id,
-                        ReplyDraftRequest.Question::text,
+                        ReplyDraftRequest.Question::question,
                         (a, b) -> a));
 
         for (ReplyDraftRequest.Answer a : answers) {
@@ -343,7 +343,7 @@ public class ReplyService {
         return questions.stream()
                 .map(q -> new AiReplyClient.QuestionAnswer(
                         q.id(),
-                        TextSanitizer.sanitize(q.text()),
+                        TextSanitizer.sanitize(q.question()),
                         answerByQuestionId.get(q.id())))
                 .toList();
     }
