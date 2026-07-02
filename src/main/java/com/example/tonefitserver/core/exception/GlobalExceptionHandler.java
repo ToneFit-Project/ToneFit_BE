@@ -68,7 +68,11 @@ public class GlobalExceptionHandler {
                 .map(FieldError::getDefaultMessage)
                 .collect(Collectors.joining(", "));
 
-        log.warn("Validation Exception: {}", message);
+        // 로그엔 필드 경로까지 남긴다(어느 필드가 실패했는지 특정 — 값은 남기지 않음). 응답 메시지는 그대로.
+        String fields = bindingResult.getFieldErrors().stream()
+                .map(fe -> fe.getField() + ": " + fe.getDefaultMessage())
+                .collect(Collectors.joining(", "));
+        log.warn("Validation Exception: {}", fields);
         return ResponseEntity
                 .status(ErrorType.INVALID_REQUEST.getStatus())
                 .body(ApiResponse.error(ErrorType.INVALID_REQUEST.getCode(), message));

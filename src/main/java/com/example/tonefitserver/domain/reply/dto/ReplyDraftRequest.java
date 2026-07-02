@@ -49,6 +49,10 @@ public record ReplyDraftRequest(
     public record Question(int id, @NotBlank @Size(max = 500) String text) {
     }
 
-    public record Answer(int questionId, @NotBlank @Size(max = 1_000) String answer) {
+    /**
+     * 질문별 답변. {@code answer} 는 빈 값 허용 — 사용자가 답하지 않은 질문(미답변)은 빈/누락으로 오며,
+     * 서비스가 그대로 전달하면 AI 가 중립으로 작성한다 (FUNC-Rep-06). 따라서 @NotBlank 를 걸지 않는다.
+     */
+    public record Answer(int questionId, @Size(max = 1_000) String answer) {
     }
 }
