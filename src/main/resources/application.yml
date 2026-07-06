@@ -68,19 +68,20 @@ ai:
       open-ms: ${AI_FAILOVER_CIRCUIT_OPEN_MS:1800000}
 
 # OpenAI(GPT) 폴오버 fallback. ai.failover.enabled=true 일 때만 사용.
-# api-key 는 시크릿 → AWS Secrets Manager(OPENAI_API_KEY) 필수. 모델은 PM 확정값(gpt-4.1-mini)을
+# api-key 는 시크릿 → AWS Secrets Manager(OPENAI_API_KEY) 필수. 모델은 PM 확정값을
 # 기본값으로 박음 — env/AWS Secret(OPENAI_*_MODEL)로 재배포 없이 변경 가능(선택).
 openai:
   api-key: ${OPENAI_API_KEY:}
   base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
   generation-model: ${OPENAI_GENERATION_MODEL:gpt-4.1-mini}
-  correction-model: ${OPENAI_CORRECTION_MODEL:gpt-4.1-mini}
+  # 교정 폴오버: PM 테스트 결과 gpt-5.4-mini (프롬프트 유지, 생성 폴오버는 gpt-4.1-mini 그대로).
+  correction-model: ${OPENAI_CORRECTION_MODEL:gpt-5.4-mini}
 
 gemini:
   api-key: ${GEMINI_API_KEY:}
   model: gemini-3-flash-preview
   # 회신 요약·파악·점검 보조 단계용 저가 모델 (FUNC-Rep-15). 비우면 model 로 fallback.
-  # 실제 모델 ID 는 PM 확정 후 지정 (운영은 AWS Secrets Manager GEMINI_LITE_MODEL).
+  # 운영은 AWS Secrets Manager GEMINI_LITE_MODEL 로 지정됨 (현재 gemini-3.1-flash-lite).
   light-model: ${GEMINI_LITE_MODEL:}
   base-url: https://generativelanguage.googleapis.com/v1beta
   # 생성: PM 실험 결과 비용 절감 위해 gemini-2.5-flash + thinkingBudget=512 (~53% 절감 기대).
