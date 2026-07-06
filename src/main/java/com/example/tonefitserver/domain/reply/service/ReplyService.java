@@ -40,8 +40,8 @@ import java.util.stream.Collectors;
  * 호출하고, 요약은 화면 표시 전용으로만 쓴다. 파악·작성은 요약본이 아니라 정리된 원문 대화를 사용한다.
  *
  * <ul>
- *   <li>{@link #summary} — 요약 호출 (화면 표시 전용): MailCleaner 정리 → light 모델 메일별 요약.
- *       파악·작성 경로엔 쓰이지 않는다.</li>
+ *   <li>{@link #summary} — 요약 호출 (화면 표시 전용): MailCleaner 정리 → light 모델 대화 전체
+ *       최대 3줄 요약. 파악·작성 경로엔 쓰이지 않는다.</li>
  *   <li>{@link #analyze} — 파악 호출 (FUNC-Rep-02 ①~③): MailCleaner 정리 → light 모델 파악(요약 없이
  *       정리 원문 대화 기반). 응답을 FE 가 입력 화면(R-01)에 띄웠다가 작성 호출로 회송 — 서버 상태 없음.</li>
  *   <li>{@link #draft} — 작성 호출 (⑤~⑥): main 모델 작성 → light 모델 점검(best-effort) →
@@ -87,9 +87,9 @@ public class ReplyService {
     // ===== 요약 호출 (화면 표시 전용) =====
 
     /**
-     * 요약 호출 — 받은 메일을 메일별로 요약해 FE 화면 표시에만 쓴다(파악·작성 경로 미사용).
-     * 게이트·검증·차감 순서는 파악과 동일(킬스위치 → 회신 약관 → CONTENT_TOO_LONG/EMPTY 검증은
-     * 차감 전 → consume). 요약은 별도 호출이라 호출별로 한도를 차감한다(PM 확정 — 통일).
+     * 요약 호출 — 받은 메일 대화 전체를 최대 3줄로 요약해 FE 화면 표시에만 쓴다(파악·작성 경로 미사용).
+     * 메일별 요약이 아니라 스레드 단위 (PM 요약 프롬프트 갱신본, 2026-07).
+     * 게이트·검증 순서는 파악과 동일(킬스위치 → 회신 약관 → CONTENT_TOO_LONG/EMPTY 검증). 한도 미차감.
      */
     public ReplySummaryResponse summary(Long userId, ReplyAnalysisRequest req) {
         ensureReplyEnabled();
@@ -107,7 +107,9 @@ public class ReplyService {
             throw new BusinessException(ErrorType.CONTENT_TOO_LONG,
                     "정리 후 대화 본문 합산이 20,000자를 초과했습니다.");
         }
-        boolean allBlank = cleaned.mails().stream().allMatch(String::isBlank);
+        // 파악과 동일 기준: 인용에서 복원한 맥락만 있어도 요약할 내용은 있다.
+        boolean allBlank = cleaned.mails().stream().allMatch(String::isBlank)
+                && cleaned.recoveredContext().isBlank();
         if (allBlank) {
             throw new BusinessException(ErrorType.EMPTY_THREAD);
         }
@@ -115,26 +117,22 @@ public class ReplyService {
         // 요약은 계정 한도를 차감하지 않는다 — 회신 1건의 차감은 파악(analyze)에서 1회만(요약과 병행 호출이라
         // 여기서 또 차감하면 이중). 요약은 표시 전용·저가 모델이고, 남용은 킬스위치·회신 약관·IP 레이트리밋으로 방어.
 
+        // 파악과 동일한 대화 텍스트로 스레드 전체를 요약 — 입력 형식([N] 보낸 사람/본문)도 프롬프트와 일치.
         List<String> senders = req.mails().stream().map(ReplyAnalysisRequest.Mail::sender).toList();
+        String conversation = buildConversation(senders, cleaned);
+
         long start = System.currentTimeMillis();
-        List<String> summaries;
+        List<String> summaryLines;
         try {
-            summaries = aiClient.summarize(cleaned.mails());
+            summaryLines = aiClient.summarize(conversation);
         } catch (Exception e) {
             throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
                     ErrorType.AI_SERVICE_ERROR.getMessage(), null, e);
         }
-        log.info("reply_summary durationMs={} mails={}",
-                System.currentTimeMillis() - start, cleaned.mails().size());
+        log.info("reply_summary durationMs={} mails={} lines={}",
+                System.currentTimeMillis() - start, cleaned.mails().size(), summaryLines.size());
 
-        List<ReplySummaryResponse.MailSummary> result = new ArrayList<>();
-        for (int i = 0; i < cleaned.mails().size(); i++) {
-            String sender = (i < senders.size() && senders.get(i) != null && !senders.get(i).isBlank())
-                    ? senders.get(i) : "(미상)";
-            String summary = i < summaries.size() ? summaries.get(i) : "";
-            result.add(new ReplySummaryResponse.MailSummary(i + 1, sender, summary));
-        }
-        return new ReplySummaryResponse(result);
+        return new ReplySummaryResponse(summaryLines);
     }
 
     // ===== 파악 호출 =====
