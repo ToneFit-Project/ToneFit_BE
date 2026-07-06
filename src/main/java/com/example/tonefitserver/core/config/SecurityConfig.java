@@ -49,7 +49,8 @@ public class SecurityConfig {
             .headers(headers -> headers
                 // 클릭재킹: 기본 X-Frame-Options DENY 유지 + CSP frame-ancestors 로 현대 브라우저까지 커버.
                 .frameOptions(frame -> frame.deny())
-                // HSTS: ALB(TLS 종단) 뒤라 prod 는 forward-headers-strategy=framework 로 isSecure()=true → 발화.
+                // HSTS: TLS 종단은 CloudFront — CloudFront→EC2 구간이 HTTP 라 현재는 미발화(no-op).
+                // 전구간 HTTPS 전환(인프라팀 보류) 시 forward-headers 인식으로 발화되는 대비 설정.
                 // 로컬/도커(HTTP)는 secure 아님 → 미발화(의도된 동작 — localhost 에 HSTS 가 걸리는 것 회피).
                 .httpStrictTransportSecurity(hsts -> hsts
                     .includeSubDomains(true)
@@ -108,7 +109,7 @@ public class SecurityConfig {
                 "https://tonefit-six.vercel.app",
                 "http://localhost:8080",
                 "https://tonefit.kr",
-                "chrome-extension://*"   // Extension — 운영 ID 확정 시 고정 origin 으로 좁히기 권장
+                "chrome-extension://hccpncocbnbphkmandkcmnefolgfhcgi"   // Extension 운영 ID (웹스토어 게시)
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));

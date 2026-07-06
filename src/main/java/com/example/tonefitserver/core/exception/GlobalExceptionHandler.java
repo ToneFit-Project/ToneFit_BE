@@ -136,7 +136,7 @@ public class GlobalExceptionHandler {
     /**
      * 클라이언트가 응답 수신 전에 연결을 끊은 경우 — Broken pipe / Connection reset.
      * 서버 버그가 아닌 정상 네트워크 현상이므로 WARN 으로 다운그레이드, 응답 쓰기 시도 안 함.
-     * 흔한 원인: FE/브라우저 timeout, 사용자 페이지 이탈, ALB idle timeout, 모바일 네트워크 끊김.
+     * 흔한 원인: FE/브라우저 timeout, 사용자 페이지 이탈, 프록시(CloudFront) idle timeout, 모바일 네트워크 끊김.
      */
     @ExceptionHandler(AsyncRequestNotUsableException.class)
     public void handleClientDisconnect(AsyncRequestNotUsableException e) {
