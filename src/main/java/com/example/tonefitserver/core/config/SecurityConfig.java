@@ -108,7 +108,7 @@ public class SecurityConfig {
                 "https://tonefit-six.vercel.app",
                 "http://localhost:8080",
                 "https://tonefit.kr",
-                "chrome-extension://*"   // Extension — 운영 ID 확정 시 고정 origin 으로 좁히기 권장
+                "chrome-extension://hccpncocbnbphkmandkcmnefolgfhcgi"   // Extension 운영 ID (웹스토어 게시)
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
