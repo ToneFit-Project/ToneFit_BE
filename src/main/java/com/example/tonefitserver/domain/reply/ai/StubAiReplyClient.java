@@ -15,10 +15,10 @@ import java.util.List;
 public class StubAiReplyClient implements AiReplyClient {
 
     @Override
-    public List<String> summarize(List<String> mailBodies) {
-        return mailBodies.stream()
-                .map(b -> b.length() > 60 ? b.substring(0, 60) + "…" : b)
-                .toList();
+    public List<String> summarize(String conversation) {
+        if (conversation == null || conversation.isBlank()) return List.of();
+        String head = conversation.strip().replace('\n', ' ');
+        return List.of("[테스트 요약] " + (head.length() > 60 ? head.substring(0, 60) + "…" : head));
     }
 
     @Override
