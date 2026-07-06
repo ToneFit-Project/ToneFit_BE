@@ -40,7 +40,8 @@ public interface AiReplyClient {
      * @param replyTargetSender 답장 대상 메일 발신자 (격식 기준)
      * @param to                받는 사람(To)
      * @param cc                참조(CC) — 윗사람·외부 포함 시 격식 상향
-     * @param conversation      BE 가 조립한 대화 텍스트([1] 보낸사람/본문 블록, 길면 요약 포함)
+     * @param conversation      BE 가 조립한 대화 텍스트([1] 보낸사람/본문 블록) — 정리 원문 그대로.
+     *                          요약은 표시 전용으로 분리(v0.58), 파악 경로에 섞이지 않는다
      */
     record AnalyzeInput(String meIdentity, String replyTargetSender,
                         List<String> to, List<String> cc, String conversation) {

@@ -32,7 +32,7 @@ import java.util.List;
  * </ul>
  *
  * <p>한도 값은 {@link RateLimitProperties}(환경변수)로 주입 — 재배포 없이 조정.
- * <p>키: client IP (X-Forwarded-For 우선 — ALB 뒤. 없으면 remoteAddr).
+ * <p>키: client IP (X-Forwarded-For 우선 — CloudFront 뒤. 없으면 remoteAddr).
  * <p>저장소: Caffeine LRU + TTL eviction. 최대 100k 키 / 10분 미사용 시 만료.
  * <p>알고리즘: Bucket4j 토큰 버킷 + <b>intervally refill</b> — 1분마다 capacity 를 일괄 보충(중간 보충 없음)
  *    하므로 "1분 윈도우 내 N회 초과 차단"으로 동작한다. (greedy 보충이면 초기 버스트 + 연속 보충으로
@@ -89,7 +89,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return null;
     }
 
-    /** ALB 뒤이므로 X-Forwarded-For 가 우선. 콤마 구분 리스트면 첫 번째(원본 클라). */
+    /** CloudFront 뒤이므로 X-Forwarded-For 가 우선. 콤마 구분 리스트면 첫 번째(원본 클라). */
     private String clientIp(HttpServletRequest req) {
         String fwd = req.getHeader("X-Forwarded-For");
         if (StringUtils.hasText(fwd)) {

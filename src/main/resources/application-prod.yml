@@ -22,8 +22,8 @@ jwt:
 
 server:
   port: 8080
-  # ALB 가 TLS 종단 → 앱은 HTTP 로 받는다. X-Forwarded-* 를 신뢰해 request.isSecure()=true 로 만들어야
-  # Spring Security 가 HTTPS 요청에만 발화하는 HSTS 헤더를 prod 에서 정상적으로 내보낸다(스킴 인식도 교정).
+  # CloudFront 가 TLS 종단 → 앱은 HTTP 로 받는다. 프록시가 X-Forwarded-* 를 전달하면 신뢰해
+  # request.isSecure()/스킴 인식을 교정 — HSTS 등 HTTPS 조건 헤더의 발화 전제 (전구간 HTTPS 전환 대비).
   forward-headers-strategy: framework
   tomcat:
     accept-count: 100
