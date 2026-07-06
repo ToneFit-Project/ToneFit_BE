@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * 약관 동의 현황 — GET /users/me/terms. PATCH /users/me/terms/{type} 의 조회 짝.
  *
- * <p>5종 전체를 항상 내려준다(기록 없는 타입은 agreed=false) — FE 가 약관 목록을
+ * <p>7종 전체를 항상 내려준다(기록 없는 타입은 agreed=false) — FE 가 약관 목록을
  * 하드코딩하지 않고 이 응답만으로 설정 화면을 그릴 수 있도록.
  */
 public record TermsStatusResponse(List<Item> terms) {

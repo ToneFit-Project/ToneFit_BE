@@ -52,8 +52,9 @@ import java.util.stream.Collectors;
  * 받은 메일은 제3자 글 — 본문·보낸 사람 정보를 로그에도 남기지 않는다.
  * 점검 issue 의 detail 도 내용이 섞일 수 있어 재작성 프롬프트로만 쓰고 로그엔 type 만.
  *
- * <p>게이트 (PM 확정): 킬스위치({@code reply.enabled}, FUNC-Lim-10) → MAIL_READ 동의(FUNC-Ag-08,
- * 회신만 차단) → 계정 한도(회신 1건당 1회 — 파악에서 일일+분당 차감, 요약 미차감, 작성 분당 가드만) →
+ * <p>게이트 (PM 확정): 킬스위치({@code reply.enabled}, FUNC-Lim-10) → 회신 약관 2종 동의
+ * (MAIL_READ·OVERSEAS_TRANSFER, FUNC-Ag-08 — 회신만 차단) → 계정 한도(회신 1건당 1회 —
+ * 파악에서 일일+분당 차감, 요약 미차감, 작성 분당 가드만) →
  * 정리 후 본문 합산 20,000자 초과 시 CONTENT_TOO_LONG.
  *
  * <p>Phase C: reply 메타데이터·이벤트, 잔여 에러 세분화(한국어 감지 등), 비용 경보.
@@ -72,6 +73,10 @@ public class ReplyService {
     /** "너무 김" 기준 — 정리(인용·서명 제거) 후 대화 본문 합산 글자 수 (PM 확정, FUNC-Rep-14). */
     private static final int CONVERSATION_MAX_CHARS = 20_000;
 
+    /** 회신 진입 필수 약관 — 개인정보 수집·이용(받은 메일 포함) + 국외이전 (PM 확정 2종). */
+    private static final List<TermsType> REPLY_REQUIRED_TERMS =
+            List.of(TermsType.MAIL_READ, TermsType.OVERSEAS_TRANSFER);
+
     private final UserRepository userRepository;
     private final UserTermsAgreementRepository userTermsAgreementRepository;
     private final PromptVersionRepository promptVersionRepository;
@@ -83,13 +88,13 @@ public class ReplyService {
 
     /**
      * 요약 호출 — 받은 메일을 메일별로 요약해 FE 화면 표시에만 쓴다(파악·작성 경로 미사용).
-     * 게이트·검증·차감 순서는 파악과 동일(킬스위치 → MAIL_READ → CONTENT_TOO_LONG/EMPTY 검증은
+     * 게이트·검증·차감 순서는 파악과 동일(킬스위치 → 회신 약관 → CONTENT_TOO_LONG/EMPTY 검증은
      * 차감 전 → consume). 요약은 별도 호출이라 호출별로 한도를 차감한다(PM 확정 — 통일).
      */
     public ReplySummaryResponse summary(Long userId, ReplyAnalysisRequest req) {
         ensureReplyEnabled();
         User user = loadUser(userId);
-        requireMailReadConsent(user.getId());
+        requireReplyConsents(user.getId());
 
         List<String> rawBodies = req.mails().stream()
                 .map(m -> TextSanitizer.sanitize(m.body()))
@@ -108,7 +113,7 @@ public class ReplyService {
         }
 
         // 요약은 계정 한도를 차감하지 않는다 — 회신 1건의 차감은 파악(analyze)에서 1회만(요약과 병행 호출이라
-        // 여기서 또 차감하면 이중). 요약은 표시 전용·저가 모델이고, 남용은 킬스위치·MAIL_READ·IP 레이트리밋으로 방어.
+        // 여기서 또 차감하면 이중). 요약은 표시 전용·저가 모델이고, 남용은 킬스위치·회신 약관·IP 레이트리밋으로 방어.
 
         List<String> senders = req.mails().stream().map(ReplyAnalysisRequest.Mail::sender).toList();
         long start = System.currentTimeMillis();
@@ -137,7 +142,7 @@ public class ReplyService {
     public ReplyAnalysisResponse analyze(Long userId, ReplyAnalysisRequest req) {
         ensureReplyEnabled();
         User user = loadUser(userId);
-        requireMailReadConsent(user.getId());
+        requireReplyConsents(user.getId());
 
         // ① 기계 정리 (FUNC-Rep-04): 인용·서명 제거 + 미중복 trail 복원. 의미 파악은 AI 몫.
         List<String> rawBodies = req.mails().stream()
@@ -236,7 +241,7 @@ public class ReplyService {
     public ReplyDraftResponse draft(Long userId, ReplyDraftRequest req) {
         ensureReplyEnabled();
         User user = loadUser(userId);
-        requireMailReadConsent(user.getId());
+        requireReplyConsents(user.getId());
         // 일일은 파악에서 이미 1회 차감 — 작성은 분당 가드만(무상태라 메인 모델 직접 반복 방어). 일일 이중 차감 방지.
         userRateLimiter.consumeMinuteOnly(UserRateLimiter.CATEGORY_REPLY, user.getId());
 
@@ -386,19 +391,22 @@ public class ReplyService {
     }
 
     /**
-     * "받은 메일 읽기" 동의 게이트 (FUNC-Ag-08). 회신은 받은 메일(제3자 글)을 읽으므로
-     * MAIL_READ 활성 동의 없이는 차단 — 회신 최초 사용 시 FE 가 동의를 받아
-     * {@code PATCH /users/me/terms/MAIL_READ} 로 기록한 뒤 재호출한다.
-     * 응답은 로그인 약관 차단과 동일 형식: TERMS_AGREEMENT_REQUIRED + missing_terms.
+     * 회신 약관 게이트 (FUNC-Ag-08 + PM 확정 2종, 2026-07). 회신은 받은 메일(제3자 글)을 읽고
+     * 국외 AI 서버로 전송하므로 MAIL_READ(개인정보 수집·이용, 받은 메일 포함)와
+     * OVERSEAS_TRANSFER(국외이전) 활성 동의가 모두 있어야 한다 — 회신 최초 사용 시 FE 가
+     * 동의를 받아 {@code PATCH /users/me/terms/{type}} 로 기록한 뒤 재호출한다.
+     * 응답은 로그인 약관 차단과 동일 형식: TERMS_AGREEMENT_REQUIRED + missing_terms(부족분만).
      */
-    private void requireMailReadConsent(Long userId) {
-        boolean consented = userTermsAgreementRepository
-                .findActiveTypesByUserId(userId)
-                .contains(TermsType.MAIL_READ);
-        if (!consented) {
+    private void requireReplyConsents(Long userId) {
+        List<TermsType> active = userTermsAgreementRepository.findActiveTypesByUserId(userId);
+        List<String> missing = REPLY_REQUIRED_TERMS.stream()
+                .filter(t -> !active.contains(t))
+                .map(Enum::name)
+                .toList();
+        if (!missing.isEmpty()) {
             throw new BusinessException(ErrorType.TERMS_AGREEMENT_REQUIRED,
-                    "받은 메일 읽기 동의가 필요합니다.")
-                    .withDetails(Map.of("missing_terms", List.of(TermsType.MAIL_READ.name())));
+                    "회신 기능 이용에 필요한 약관 동의가 필요합니다.")
+                    .withDetails(Map.of("missing_terms", missing));
         }
     }
 
