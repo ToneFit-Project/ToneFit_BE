@@ -64,6 +64,10 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("GEMINI_LITE_MODEL")) {
                 properties.put("gemini.light-model", app.get("GEMINI_LITE_MODEL").asText());
             }
+            // 회신 작성(draft) 전용 thinkingLevel — 없으면 yaml 기본값(low). 빈 값이면 thinkingConfig 미지정.
+            if (app.hasNonNull("GEMINI_REPLY_THINKING_LEVEL")) {
+                properties.put("gemini.reply-thinking-level", app.get("GEMINI_REPLY_THINKING_LEVEL").asText());
+            }
             // 생성·교정 전용 모델·사고수준 — 모두 선택(없으면 application.yml 의 PM 확정 기본값 사용).
             // 운영에서 재배포 없이 모델/사고수준 튜닝 가능하도록 Secrets Manager 키로 노출.
             if (app.hasNonNull("GEMINI_GENERATION_MODEL")) {

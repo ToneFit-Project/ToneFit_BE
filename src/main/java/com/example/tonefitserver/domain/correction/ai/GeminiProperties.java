@@ -7,6 +7,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  *
  * <p>{@code model} 은 기본/회신 메인 모델. {@code lightModel} 은 회신의 요약·파악·점검 보조 단계용
  * 저가 모델 (FUNC-Rep-15) — 비워두면 {@code model} 로 fallback.
+ * {@code replyThinkingLevel} 은 회신 작성(draft) 호출 전용 thinkingLevel (PM 확정:
+ * gemini-3.5-flash + low) — 비워두면 thinkingConfig 미지정(모델 기본). 보조 3종에는 적용하지 않는다.
  *
  * <p>생성·교정은 PM 실험 결과 모델·사고수준을 각각 분리 운영한다(비용 절감). 미설정 시 {@code model} fallback.
  * <ul>
@@ -24,7 +26,8 @@ public record GeminiProperties(
         String generationModel,
         Integer generationThinkingBudget,
         String correctionModel,
-        String correctionThinkingLevel
+        String correctionThinkingLevel,
+        String replyThinkingLevel
 ) {
     /** 보조 단계용 모델 — 미설정 시 메인 모델 사용. */
     public String lightModelOrDefault() {
