@@ -18,8 +18,9 @@ import java.util.Map;
 /**
  * Gemini 기반 회신 클라이언트. 교정·생성 client 와 같은 RestClient·GeminiProperties 공유.
  *
- * <p>모델 분담 (FUNC-Rep-15): 작성({@link #draft})은 메인 모델, 요약·파악·점검은 저가 모델
- * ({@code gemini.light-model}, 미설정 시 메인 fallback). API 키는 하나 — 모델은 경로 파라미터.
+ * <p>모델 분담 (FUNC-Rep-15): 작성({@link #draft})은 메인 모델(PM 확정 gemini-3.5-flash +
+ * thinkingLevel low — {@code gemini.reply-thinking-level}, 작성 호출에만 적용), 요약·파악·점검은
+ * 저가 모델({@code gemini.light-model}, 미설정 시 메인 fallback). API 키는 하나 — 모델은 경로 파라미터.
  *
  * <p>요약·파악·점검 prompt 는 수신자 무관이라 코드 상수. 작성 prompt 만 DB(REPLY×recipient, V20).
  */
@@ -225,7 +226,7 @@ public class GeminiAiReplyClient implements AiReplyClient {
         String system = (in.promptContent() == null || in.promptContent().isBlank())
                 ? DEFAULT_DRAFT_SYSTEM_PROMPT : in.promptContent();
         String json = callAndExtract("reply_draft", properties.model(),
-                system, buildDraftUserMessage(in), draftSchema());
+                system, buildDraftUserMessage(in), draftSchema(), properties.replyThinkingLevel());
         try {
             return objectMapper.readValue(json, AiReplyDraftResult.class);
         } catch (Exception e) {
@@ -348,12 +349,23 @@ public class GeminiAiReplyClient implements AiReplyClient {
 
     private String callAndExtract(String op, String model, String systemInstruction,
                                   String userText, Map<String, Object> schema) {
+        return callAndExtract(op, model, systemInstruction, userText, schema, null);
+    }
+
+    /** {@code thinkingLevel} 은 회신 작성 전용 옵션 — null/blank 면 thinkingConfig 미지정(모델 기본). */
+    private String callAndExtract(String op, String model, String systemInstruction,
+                                  String userText, Map<String, Object> schema, String thinkingLevel) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("systemInstruction", Map.of("parts", List.of(Map.of("text", systemInstruction))));
         body.put("contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", userText)))));
-        body.put("generationConfig", Map.of(
-                "responseMimeType", "application/json",
-                "responseJsonSchema", schema));
+        Map<String, Object> genConfig = new LinkedHashMap<>();
+        genConfig.put("responseMimeType", "application/json");
+        genConfig.put("responseJsonSchema", schema);
+        // gemini-3 계열 → thinkingLevel 만 지정. budget·level 동시 지정은 Gemini 가 거부 (교정과 동일 정책).
+        if (thinkingLevel != null && !thinkingLevel.isBlank()) {
+            genConfig.put("thinkingConfig", Map.of("thinkingLevel", thinkingLevel));
+        }
+        body.put("generationConfig", genConfig);
 
         String path = "/models/" + model + ":generateContent";
         GeminiResponse response = geminiRestClient.post()
