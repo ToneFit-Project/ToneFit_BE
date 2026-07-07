@@ -37,49 +37,54 @@ public class GeminiAiReplyClient implements AiReplyClient {
 
     private static final String SUMMARIZE_SYSTEM_PROMPT = """
             당신은 한국어 비즈니스 이메일 대화를 간추리는 요약 전문가입니다.
-            회신을 준비하는 사용자가 이전 대화 맥락을 빠르게 읽도록 긴 메일을 짧게 줄입니다.
-            요약만 합니다. 회신을 쓰거나 의견을 더하지 않습니다.
+            회신을 준비하는 사용자가 이전에 주고받은 내용을 빠르게 훑을 수 있도록, 받은 메일 대화를 짧게 요약합니다.
+            요약만 합니다. 회신을 쓰거나, 질문을 뽑거나, 의견을 더하지 않습니다.
 
-            [규칙]
-            1. 메일당 3문장 이내.
-            2. 있는 내용만 줄입니다. 새 사실·해석·평가·추측을 더하지 않습니다.
-            3. 다음은 반드시 보존: 날짜·기한·금액·수량 등 모든 수치 / 질문·요청·결정 사항 /
-               고유명사(회사·제품·프로젝트·사람 이름).
-            4. 인사·안부·서명 등 내용 없는 부분은 버립니다.
-            5. 이메일 주소·전화번호는 옮기지 않습니다(이름·호칭만).
-            6. 원문에 없는 존칭·어체 변환을 하지 않습니다. 중립 서술체로 적습니다.
+            [입력 형식]
+            --- 받은 메일 대화 (오래된 것부터) ---
+            [1] 보낸 사람: ...
+            본문: ...
+            [2] 보낸 사람: ...
+            본문: ...
+            --- 끝 ---
+
+            [요약 규칙]
+            1. 메일이 한 통이면 그 메일 내용을, 두 통 이상이면 주고받은 흐름을 요약합니다.
+            2. 어느 경우든 최대 3줄. 한 줄에 한 요점만 담고 짧게 씁니다.
+            3. 내용이 적으면 1~2줄로 끝냅니다. 3줄을 채우려고 없는 내용·군더더기를 넣지 않습니다.
+            4. 있는 내용만 줄입니다. 새 사실·해석·평가·추측을 더하지 않습니다.
+            5. 줄을 고르는 우선순위: ① 상대가 요청·질문한 것, 정해야 할 것 → ② 날짜·기한·금액·수량 등
+               수치가 걸린 사실 → ③ 나머지 맥락. 줄이 모자라면 ③과 인사·감사·평가부터 버립니다.
+            6. 고유명사(회사·제품·프로젝트·사람 이름)와 수치는 원문 그대로 씁니다.
+            7. 인사말·안부·서명 등 내용 없는 부분, 이메일 주소·전화번호는 담지 않습니다(이름·호칭만).
+            8. 원문에 없는 존칭·어체 변환을 하지 않습니다. 중립 서술체로 씁니다.
+
+            [출력]
+            응답은 JSON Schema 로 강제됩니다: { "summary_lines": ["...", "..."] }
+            - 최대 3개 항목(짧으면 1~2개). 각 줄은 배열의 별도 문자열로 나눕니다.
+              한 문자열 안에 줄바꿈(\\n)을 넣지 않습니다.
             """;
 
     @Override
-    public List<String> summarize(List<String> mailBodies) {
-        if (mailBodies == null || mailBodies.isEmpty()) return List.of();
-        StringBuilder user = new StringBuilder("--- 요약할 메일 (오래된 것부터) ---\n");
-        for (int i = 0; i < mailBodies.size(); i++) {
-            user.append('[').append(i + 1).append("] 본문:\n").append(mailBodies.get(i)).append('\n');
-        }
-        user.append("--- 끝 ---");
+    public List<String> summarize(String conversation) {
+        if (conversation == null || conversation.isBlank()) return List.of();
+        String user = "--- 받은 메일 대화 (오래된 것부터) ---\n" + conversation + "\n--- 끝 ---";
 
         String json = callAndExtract("reply_summarize", properties.lightModelOrDefault(),
-                SUMMARIZE_SYSTEM_PROMPT, user.toString(), summarizeSchema());
+                SUMMARIZE_SYSTEM_PROMPT, user, summarizeSchema());
         SummarizeOut out;
         try {
             out = objectMapper.readValue(json, SummarizeOut.class);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to parse Gemini reply summarize response: " + json, e);
+            throw new IllegalStateException("Failed to parse Gemini reply summarize response", e);
         }
-        // order 로 정렬 후 입력 길이에 맞춰 정렬·보정 (누락분은 원문 유지).
-        String[] result = new String[mailBodies.size()];
-        if (out.summaries() != null) {
-            for (SummarizeOut.Item it : out.summaries()) {
-                int idx = (it.order() == null ? 0 : it.order()) - 1;
-                if (idx >= 0 && idx < result.length) result[idx] = it.summary();
-            }
-        }
-        List<String> list = new ArrayList<>(mailBodies.size());
-        for (int i = 0; i < mailBodies.size(); i++) {
-            list.add(result[i] != null ? result[i] : mailBodies.get(i));
-        }
-        return list;
+        if (out.summaryLines() == null) return List.of();
+        // 방어: 빈 줄 제거 + 3줄 초과분 절단 (프롬프트·스키마가 지키지 못한 경우).
+        return out.summaryLines().stream()
+                .filter(l -> l != null && !l.isBlank())
+                .map(String::strip)
+                .limit(3)
+                .toList();
     }
 
     // ===== ③ 파악 (light) =====
@@ -332,20 +337,15 @@ public class GeminiAiReplyClient implements AiReplyClient {
     // ===== 스키마 =====
 
     private Map<String, Object> summarizeSchema() {
-        Map<String, Object> itemProps = new LinkedHashMap<>();
-        itemProps.put("order", Map.of("type", "integer"));
-        itemProps.put("summary", Map.of("type", "string"));
-        Map<String, Object> item = new LinkedHashMap<>();
-        item.put("type", "object");
-        item.put("properties", itemProps);
-        item.put("required", List.of("order", "summary"));
-
         Map<String, Object> props = new LinkedHashMap<>();
-        props.put("summaries", Map.of("type", "array", "items", item));
+        props.put("summary_lines", Map.of(
+                "type", "array",
+                "items", Map.of("type", "string"),
+                "maxItems", 3));
         Map<String, Object> root = new LinkedHashMap<>();
         root.put("type", "object");
         root.put("properties", props);
-        root.put("required", List.of("summaries"));
+        root.put("required", List.of("summary_lines"));
         return root;
     }
 
@@ -416,9 +416,7 @@ public class GeminiAiReplyClient implements AiReplyClient {
 
     // ===== 파싱용 내부 DTO =====
 
-    private record SummarizeOut(List<Item> summaries) {
-        record Item(Integer order, String summary) {
-        }
+    private record SummarizeOut(List<String> summaryLines) {
     }
 
     private record AnalyzeOut(String status, RecipientOut recipient, List<QuestionOut> questions) {

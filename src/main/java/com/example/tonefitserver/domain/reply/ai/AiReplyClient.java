@@ -9,7 +9,7 @@ import java.util.List;
  * 요약·파악·점검은 저가(light) 모델, 작성은 메인 모델 (FUNC-Rep-15) — 구현체가 모델을 선택한다.
  *
  * <ul>
- *   <li>{@link #summarize} — ② 요약 (이전 메일이 길 때만 호출, 별도 단계). PM 요약 프롬프트.</li>
+ *   <li>{@link #summarize} — ② 요약 (화면 표시 전용, 별도 단계). 대화 전체 최대 3줄. PM 요약 프롬프트.</li>
  *   <li>{@link #analyze} — ③ 파악: 받는 사람 유형 추측 + 답할 질문 추출 + 사전 점검(status).</li>
  *   <li>{@link #draft} — ⑤ 작성. 재작성 시 {@code revisionNotes} 전달.</li>
  *   <li>{@link #inspect} — ⑥ 내부 점검 (judge). 점검→조건부 1회 재작성 오케스트레이션은 서비스 몫.</li>
@@ -20,10 +20,12 @@ import java.util.List;
 public interface AiReplyClient {
 
     /**
-     * 이전 메일들을 각각 요약한다(회신에서 답할 단서는 보존). 입력 순서와 동일 순서로 반환.
-     * @param mailBodies 요약할 메일 본문들 (보통 답장 대상 제외한 이전 메일)
+     * 받은 메일 대화 전체를 최대 3줄로 요약한다 (PM 요약 프롬프트 갱신본, 2026-07).
+     * 메일별 요약이 아니라 대화(스레드) 단위 — 한 통이면 그 메일을, 여러 통이면 흐름을 요약.
+     * @param conversation BE 가 조립한 대화 텍스트([N] 보낸 사람/본문 블록)
+     * @return 요약 줄 목록 1~3개 — 각 줄은 한 요점, 줄 안에 줄바꿈 없음
      */
-    List<String> summarize(List<String> mailBodies);
+    List<String> summarize(String conversation);
 
     /** ③ 파악 — 받는 사람 유형 추측 + 답할 질문 추출 + 사전 점검. */
     AiReplyAnalysisResult analyze(AnalyzeInput in);

@@ -49,7 +49,7 @@ public class UserService {
     }
 
     /**
-     * 약관 동의 현황 조회 — 5종 전체를 항상 반환 (기록 없는 타입은 agreed=false).
+     * 약관 동의 현황 조회 — 7종 전체를 항상 반환 (기록 없는 타입은 agreed=false).
      *
      * <p>agreed 판정은 {@link #toggleTerms} 와 동일하게 <b>버전 무관 활성</b>
      * (agreed=true AND revoked_at IS NULL). 약관 버전업 과도기에 활성 row 가 여러 버전이면
