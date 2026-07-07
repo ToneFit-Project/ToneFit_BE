@@ -109,7 +109,8 @@ public class SecurityConfig {
                 "https://tonefit-six.vercel.app",
                 "http://localhost:8080",
                 "https://tonefit.kr",
-                "chrome-extension://hccpncocbnbphkmandkcmnefolgfhcgi"   // Extension 운영 ID (웹스토어 게시)
+                "chrome-extension://hccpncocbnbphkmandkcmnefolgfhcgi",  // Extension 운영 ID (웹스토어 게시)
+                "chrome-extension://mlideabaeifblifdknaalinclaobnkgh"   // FE 테스트용 확장 (FE 요청 — 테스트 종료 시 제거 가능)
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));
