@@ -79,7 +79,11 @@ openai:
 
 gemini:
   api-key: ${GEMINI_API_KEY:}
-  model: gemini-3-flash-preview
+  # 회신 작성(draft) 모델 — PM 확정: gemini-3.5-flash + thinkingLevel low.
+  # 운영은 AWS Secrets Manager GEMINI_MODEL(필수 키)이 이 값을 덮음 — AWS 쪽도 함께 갱신 필요.
+  model: gemini-3.5-flash
+  # 회신 작성 전용 thinkingLevel (gemini-3 계열). 비우면 thinkingConfig 미지정. 보조 3종엔 미적용.
+  reply-thinking-level: ${GEMINI_REPLY_THINKING_LEVEL:low}
   # 회신 요약·파악·점검 보조 단계용 저가 모델 (FUNC-Rep-15). 비우면 model 로 fallback.
   # 운영은 AWS Secrets Manager GEMINI_LITE_MODEL 로 지정됨 (현재 gemini-3.1-flash-lite).
   light-model: ${GEMINI_LITE_MODEL:}
