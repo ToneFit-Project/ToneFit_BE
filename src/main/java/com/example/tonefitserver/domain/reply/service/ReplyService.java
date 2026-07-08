@@ -36,8 +36,10 @@ import java.util.stream.Collectors;
 /**
  * 회신(Reply) 도메인 서비스. REQ-Reply — 무상태 파이프라인.
  *
- * <p>PM 재설계(v0.58): 요약을 생성 파이프라인에서 분리. "회신 준비" 버튼에서 FE 가 요약·파악을 병렬
- * 호출하고, 요약은 화면 표시 전용으로만 쓴다. 파악·작성은 요약본이 아니라 정리된 원문 대화를 사용한다.
+ * <p>PM 재설계(v0.58): 요약·파악은 "회신 준비" 버튼에서 병렬 호출(상호 독립). 파악은 항상 정리된
+ * 원문 대화를 쓴다. 작성은 FE 가 요약(summary_lines)을 회송하면 원문 대신 요약을 대화 입력으로
+ * 사용한다(메일 2건 이상 + 요약 성공 시 — 속도 개선, PM 확정 2026-07). 미회송이면 원문 fallback —
+ * 요약 실패·미도착이 작성을 막지 않는다.
  *
  * <ul>
  *   <li>{@link #summary} — 요약 호출 (화면 표시 전용): MailCleaner 정리 → light 모델 대화 전체
@@ -87,7 +89,8 @@ public class ReplyService {
     // ===== 요약 호출 (화면 표시 전용) =====
 
     /**
-     * 요약 호출 — 받은 메일 대화 전체를 최대 3줄로 요약해 FE 화면 표시에만 쓴다(파악·작성 경로 미사용).
+     * 요약 호출 — 받은 메일 대화 전체를 최대 3줄로 요약한다. FE 화면 표시가 1차 용도고,
+     * 메일 2건 이상이면 FE 가 이 결과를 작성 요청(summary_lines)으로 회송해 작성 입력으로도 쓴다.
      * 메일별 요약이 아니라 스레드 단위 (PM 요약 프롬프트 갱신본, 2026-07).
      * 게이트·검증 순서는 파악과 동일(킬스위치 → 회신 약관 → CONTENT_TOO_LONG/EMPTY 검증). 한도 미차감.
      */
@@ -246,7 +249,14 @@ public class ReplyService {
         List<AiReplyClient.QuestionAnswer> qas = pairQuestionAnswers(req);
         PromptVersion prompt = activeReplyPrompt(req.receiverType());
         String promptContent = prompt != null ? prompt.getContent() : null;
-        String conversation = TextSanitizer.sanitize(req.conversation());
+        // 요약 대체 (PM 확정 2026-07): FE 가 summary_lines 를 회송하면(메일 2건 이상 + 요약 성공)
+        // 작성·점검의 대화 입력을 원문 대신 요약으로 대체 — 입력이 짧아져 속도 개선. 점검도 같은 입력을
+        // 쓰게 해 지어내기(FABRICATION) 오판을 막는다. 미회송이면 원문 그대로 — 요약 실패가 작성을 막지 않음.
+        List<String> summaryLines = sanitizeSummaryLines(req.summaryLines());
+        boolean summaryUsed = !summaryLines.isEmpty();
+        String conversation = summaryUsed
+                ? buildSummaryConversation(summaryLines)
+                : TextSanitizer.sanitize(req.conversation());
         String freeInput = TextSanitizer.sanitize(req.freeInput());
         String extraMessage = TextSanitizer.sanitize(req.extraMessage());
         String originalSubject = TextSanitizer.sanitize(req.originalSubject());
@@ -273,7 +283,8 @@ public class ReplyService {
         // ⑥ 내부 점검 — best-effort: 점검 실패가 초안 반환을 막지 않는다 (FUNC-Rep-11).
         long remaining = budget - (System.currentTimeMillis() - start);
         if (remaining < INSPECT_MIN_BUDGET_MS) {
-            log.info("reply_draft durationMs={} inspect=skipped(budget) rewrite=false", firstDuration);
+            log.info("reply_draft durationMs={} inspect=skipped(budget) rewrite=false summaryUsed={}",
+                    firstDuration, summaryUsed);
             return toResponse(first);
         }
         AiReplyInspection check;
@@ -285,8 +296,8 @@ public class ReplyService {
             return toResponse(first);
         }
         if (check.passed()) {
-            log.info("reply_draft durationMs={} inspect=passed rewrite=false",
-                    System.currentTimeMillis() - start);
+            log.info("reply_draft durationMs={} inspect=passed rewrite=false summaryUsed={}",
+                    System.currentTimeMillis() - start, summaryUsed);
             return toResponse(first);
         }
 
@@ -298,7 +309,8 @@ public class ReplyService {
         // 재작성은 시간이 남을 때 1번만 — 1차 작성 소요만큼의 여유가 없으면 첫 초안 그대로 (FUNC-Rep-12).
         remaining = budget - (System.currentTimeMillis() - start);
         if (remaining < firstDuration) {
-            log.info("reply_draft inspect=failed types={} rewrite=skipped(budget)", issueTypes);
+            log.info("reply_draft inspect=failed types={} rewrite=skipped(budget) summaryUsed={}",
+                    issueTypes, summaryUsed);
             return toResponse(first);
         }
 
@@ -306,8 +318,8 @@ public class ReplyService {
             AiReplyDraftResult second = aiClient.draft(new AiReplyClient.DraftInput(
                     promptContent, req.receiverType(), senderName, originalSubject,
                     conversation, qas, freeInput, extraMessage, toRevisionNotes(check)));
-            log.info("reply_draft inspect=failed types={} rewrite=true totalDurationMs={}",
-                    issueTypes, System.currentTimeMillis() - start);
+            log.info("reply_draft inspect=failed types={} rewrite=true totalDurationMs={} summaryUsed={}",
+                    issueTypes, System.currentTimeMillis() - start, summaryUsed);
             // 재작성본이 비정상이면 첫 초안 fallback — 쓸 수 있는 초안을 이미 들고 있다.
             return isBlank(second.generatedEmail()) ? toResponse(first) : toResponse(second);
         } catch (Exception e) {
@@ -317,6 +329,25 @@ public class ReplyService {
     }
 
     // ===== 헬퍼 =====
+
+    /** 회송 요약 정리 — sanitize + 빈 줄 제거. 전부 비면 빈 목록 → 원문 fallback. */
+    private List<String> sanitizeSummaryLines(List<String> raw) {
+        if (raw == null) return List.of();
+        return raw.stream()
+                .map(TextSanitizer::sanitize)
+                .filter(l -> l != null && !l.isBlank())
+                .map(String::strip)
+                .toList();
+    }
+
+    /** 요약 대체 시 작성·점검에 넘길 대화 블록 — 작성 프롬프트 입력 형식의 (요약) 마커와 정합. */
+    private String buildSummaryConversation(List<String> summaryLines) {
+        StringBuilder sb = new StringBuilder("(요약) 받은 메일 대화 전체 요약:");
+        for (String line : summaryLines) {
+            sb.append("\n- ").append(line);
+        }
+        return sb.toString();
+    }
 
     /**
      * 질문-답변 페어링. 답변은 question_id 기준 매핑하며, 질문 목록에 없는 id 의 답변은
