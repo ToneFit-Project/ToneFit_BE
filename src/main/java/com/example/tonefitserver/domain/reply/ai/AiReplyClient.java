@@ -9,7 +9,8 @@ import java.util.List;
  * 요약·파악·점검은 저가(light) 모델, 작성은 메인 모델 (FUNC-Rep-15) — 구현체가 모델을 선택한다.
  *
  * <ul>
- *   <li>{@link #summarize} — ② 요약 (화면 표시 전용, 별도 단계). 대화 전체 최대 3줄. PM 요약 프롬프트.</li>
+ *   <li>{@link #summarize} — ② 요약 (별도 단계). 대화 전체 최대 3줄 — 화면 표시 + 2건 이상 시
+ *       작성 회송용. PM 요약 프롬프트.</li>
  *   <li>{@link #analyze} — ③ 파악: 받는 사람 유형 추측 + 답할 질문 추출 + 사전 점검(status).</li>
  *   <li>{@link #draft} — ⑤ 작성. 재작성 시 {@code revisionNotes} 전달.</li>
  *   <li>{@link #inspect} — ⑥ 내부 점검 (judge). 점검→조건부 1회 재작성 오케스트레이션은 서비스 몫.</li>

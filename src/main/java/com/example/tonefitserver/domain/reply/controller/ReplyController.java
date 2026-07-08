@@ -23,9 +23,10 @@ import org.springframework.web.bind.annotation.RestController;
  * 병렬 호출 — 요약이 먼저 도착하면 표시하고, 파악으로 입력 화면을 띄운다. 작성은 사용자 입력 후 별도 호출.
  *
  * <ul>
- *   <li>POST /api/v1/replies/summary — 요약 호출 (화면 표시 전용, 파악·작성에는 미사용). 200</li>
+ *   <li>POST /api/v1/replies/summary — 요약 호출 (화면 표시 + 작성 회송용). 200</li>
  *   <li>POST /api/v1/replies/analysis — 파악 호출 (①정리~③파악, 정리 원문 대화 기반). 200</li>
- *   <li>POST /api/v1/replies — 작성 호출 (⑤작성~⑥점검, 사용자 입력 후). 201</li>
+ *   <li>POST /api/v1/replies — 작성 호출 (⑤작성~⑥점검, 사용자 입력 후). 메일 2건 이상 + 요약 성공 시
+ *       FE 가 summary_lines 를 회송하면 원문 대신 요약 기반 작성(속도 개선, PM 확정). 201</li>
  * </ul>
  *
  * <p>한도: 회신 1건당 1회 차감 — 파악(analysis)에서 일일+분당. 요약 미차감, 작성은 분당 가드만.

@@ -23,10 +23,16 @@ import java.util.List;
  * 요청에 받지 않고 BE 가 인증 사용자 nickname 으로 채운다.
  */
 public record ReplyDraftRequest(
-        /* 파악 응답의 정리된 대화 회송 */
+        /* 파악 응답의 정리된 대화 회송 — summary_lines 미회송 시(1건·요약 실패) 작성 입력이자 항상 fallback */
         @NotBlank(message = "대화 내용은 필수입니다.")
         @Size(max = 12_000, message = "대화 내용은 최대 12,000자입니다.")
         String conversation,
+
+        /* 요약 회송 (선택, PM 확정 2026-07) — 메일 2건 이상 + 요약 성공 시 FE 가 요약 응답(summary_lines)을
+           그대로 되보낸다. 있으면 작성·점검의 대화 입력을 원문 대신 요약으로 대체(속도 개선),
+           없으면 conversation 원문 사용 — 요약 실패·미도착이 작성을 막지 않는다. */
+        @Size(max = 3, message = "요약은 최대 3줄입니다.")
+        List<@Size(max = 300, message = "요약 항목은 최대 300자입니다.") String> summaryLines,
 
         /* 사용자가 확정한 받는 사람 유형 */
         @NotNull Receiver receiverType,
