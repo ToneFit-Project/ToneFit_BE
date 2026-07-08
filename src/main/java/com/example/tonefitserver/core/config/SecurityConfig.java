@@ -77,6 +77,7 @@ public class SecurityConfig {
                 ).permitAll()
                 // 웹 데모 생성: 토큰 없이 호출 가능(익명 토큰 폐지). Extension 은 Bearer 토큰을 보내면
                 // JwtAuthenticationFilter 가 principal 을 채워 정식으로 처리됨. IP rate limit 으로 남용 방어.
+                // 단, 무효 Bearer(만료 등)를 실으면 필터가 401 로 거절 — 로그인 사용자의 데모 강등·만료 은폐 방지.
                 .requestMatchers(HttpMethod.POST, "/api/v1/generations").permitAll()
                 .anyRequest().authenticated()
             )
