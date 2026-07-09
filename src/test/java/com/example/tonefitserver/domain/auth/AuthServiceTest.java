@@ -28,9 +28,10 @@ class AuthServiceTest {
     private final UserTermsAgreementRepository termsRepository = mock(UserTermsAgreementRepository.class);
     private final JwtTokenProvider jwtTokenProvider = mock(JwtTokenProvider.class);
     private final GoogleIdTokenVerifier verifier = mock(GoogleIdTokenVerifier.class);
+    private final RefreshTokenService refreshTokenService = mock(RefreshTokenService.class);
 
     private final AuthService authService =
-            new AuthService(userRepository, termsRepository, jwtTokenProvider, verifier);
+            new AuthService(userRepository, termsRepository, jwtTokenProvider, verifier, refreshTokenService);
 
     @Test
     @DisplayName("형식이 깨진 ID token(파싱 단계 IllegalArgumentException)도 500 이 아닌 INVALID_ID_TOKEN")

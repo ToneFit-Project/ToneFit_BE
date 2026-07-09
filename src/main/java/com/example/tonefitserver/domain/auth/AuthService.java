@@ -26,11 +26,10 @@ import java.util.Set;
 /**
  * 인증 도메인 서비스. 정식 사용자는 Google OAuth 단일 흐름으로만 진입.
  *
- * <p>웹 데모는 토큰 없이 호출하므로 익명 토큰 발급은 없고, 자체 refresh token 도 폐지됐다 —
- * Extension 은 access token 만료 시 chrome.identity 로 새 Google ID token 을 받아 {@link #googleAuth}
- * 를 재호출(재로그인)해 새 access token 을 얻는다. BE 는 access token 만 발급하는 stateless 인증.
- *
- * <p>로그아웃은 서버 무효화 대상(refresh row)이 사라져 API 가 없다 — FE 가 access token 폐기로 처리.
+ * <p>웹 데모는 토큰 없이 호출하므로 익명 토큰 발급은 없다. 로그인 시 access(1h) + refresh(RTR, V26)
+ * 를 body 로 발급 — chrome.identity silent 갱신 불가 판명(2026-07)으로 refresh 를 재도입했다.
+ * access 만료 시 FE 는 {@code POST /auth/refresh} 로 갱신하고, refresh 까지 무효면 interactive 재로그인.
+ * 발급·회전·철회는 {@link RefreshTokenService} 담당.
  */
 @Slf4j
 @Service
@@ -44,6 +43,7 @@ public class AuthService {
     private final UserTermsAgreementRepository userTermsAgreementRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final GoogleIdTokenVerifier googleIdTokenVerifier;
+    private final RefreshTokenService refreshTokenService;
 
     /**
      * Google ID token 으로 신규 가입 / 로그인을 분기 처리한다.
@@ -75,7 +75,7 @@ public class AuthService {
             // FUNC-Ag-03 #2: 필수 약관 보유 여부 확인. 미보유면 access_token 없이 차단 —
             // termsAgreements 함께 오면 즉시 동의 처리 후 진행.
             enforceRequiredTermsForLogin(existing, termsAgreements);
-            return new GoogleAuthResult(toBody(existing, picture, issueAccessToken(existing.getId())), false);
+            return new GoogleAuthResult(toBody(existing, picture), false);
         }
 
         // 신규 정식 가입
@@ -83,7 +83,7 @@ public class AuthService {
         User created = User.registered(email, PROVIDER_GOOGLE, providerId, name);
         userRepository.save(created);
         saveTermsAgreements(created, termsAgreements);
-        return new GoogleAuthResult(toBody(created, picture, issueAccessToken(created.getId())), true);
+        return new GoogleAuthResult(toBody(created, picture), true);
     }
 
     /**
@@ -127,10 +127,6 @@ public class AuthService {
     // 내부 헬퍼
     // -----------------------------------------------------------------------
 
-    /** access token 발급 (stateless). 모든 user 는 정식. */
-    private String issueAccessToken(Long userId) {
-        return jwtTokenProvider.createAccessToken(userId);
-    }
 
     private GoogleIdToken.Payload verifyIdToken(String idTokenString) {
         try {
@@ -225,7 +221,8 @@ public class AuthService {
         }
     }
 
-    private GoogleAuthResponse toBody(User user, String profileImageUrl, String accessToken) {
+    /** 로그인 성공 body — access(1h) + refresh(RTR 새 family) 동시 발급. */
+    private GoogleAuthResponse toBody(User user, String profileImageUrl) {
         return new GoogleAuthResponse(
                 user.getId(),
                 user.getEmail(),
@@ -234,7 +231,8 @@ public class AuthService {
                 user.getProvider(),
                 user.getPlan(),
                 user.getCreditBalance(),
-                accessToken
+                jwtTokenProvider.createAccessToken(user.getId()),
+                refreshTokenService.issue(user.getId())
         );
     }
 }
