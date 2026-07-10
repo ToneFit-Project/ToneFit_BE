@@ -1,6 +1,5 @@
 package com.example.tonefitserver.domain.correction.model;
 
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import jakarta.persistence.*;
 import lombok.AccessLevel;
@@ -41,10 +40,6 @@ public class RejectedCorrection {
     @Column(name = "receiver_type", nullable = false)
     private Receiver receiverType;
 
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private Purpose purpose;
-
     /** 교정 계층(필수/권장/선택). 어떤 계층의 교정이 거절됐는지 — 과교정 분석 신호. */
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -69,21 +64,20 @@ public class RejectedCorrection {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    private RejectedCorrection(Long userId, Receiver receiverType, Purpose purpose, Label label,
+    private RejectedCorrection(Long userId, Receiver receiverType, Label label,
                               String originalPhrase, String correctedPhrase, Boolean meaningDamageSuspected) {
         this.userId = userId;
         this.receiverType = receiverType;
-        this.purpose = purpose;
         this.label = label;
         this.originalPhrase = originalPhrase;
         this.correctedPhrase = correctedPhrase;
         this.meaningDamageSuspected = meaningDamageSuspected;
     }
 
-    public static RejectedCorrection of(Long userId, Receiver receiverType, Purpose purpose, Label label,
+    public static RejectedCorrection of(Long userId, Receiver receiverType, Label label,
                                         String originalPhrase, String correctedPhrase,
                                         Boolean meaningDamageSuspected) {
-        return new RejectedCorrection(userId, receiverType, purpose, label,
+        return new RejectedCorrection(userId, receiverType, label,
                 originalPhrase, correctedPhrase, meaningDamageSuspected);
     }
 }

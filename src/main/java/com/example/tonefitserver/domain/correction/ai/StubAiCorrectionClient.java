@@ -1,6 +1,5 @@
 package com.example.tonefitserver.domain.correction.ai;
 
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.domain.correction.model.Range;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -13,7 +12,7 @@ import java.util.List;
 public class StubAiCorrectionClient implements AiCorrectionClient {
 
     @Override
-    public AiCorrectionResult correct(String promptContent, Receiver receiver, Purpose purpose,
+    public AiCorrectionResult correct(String promptContent, Receiver receiver,
                                       String original, List<Range> protectedRanges) {
         return new AiCorrectionResult(List.of());
     }

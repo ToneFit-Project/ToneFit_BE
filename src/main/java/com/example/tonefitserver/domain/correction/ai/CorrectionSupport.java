@@ -1,6 +1,5 @@
 package com.example.tonefitserver.domain.correction.ai;
 
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.domain.correction.model.Range;
 import org.slf4j.Logger;
@@ -55,9 +54,8 @@ public final class CorrectionSupport {
         return sb.toString();
     }
 
-    public static String buildUserMessage(Receiver receiver, Purpose purpose, String preparedOriginal) {
+    public static String buildUserMessage(Receiver receiver, String preparedOriginal) {
         return "[Receiver] " + receiver + '\n'
-                + "[Purpose] " + purpose + '\n'
                 + "[OriginalEmail]\n" + preparedOriginal;
     }
 

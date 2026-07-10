@@ -2,7 +2,6 @@ package com.example.tonefitserver.domain.correction.ai;
 
 import com.example.tonefitserver.core.ai.AiCircuitBreaker;
 import com.example.tonefitserver.core.ai.FailoverProperties;
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,24 +57,24 @@ class FailoverAiCorrectionClientTest {
     @Test
     @DisplayName("primary 성공 시 Gemini 결과, fallback 미호출")
     void primaryWins() {
-        when(primary.correctAsync(any(), any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(GEMINI));
+        when(primary.correctAsync(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(GEMINI));
 
         AiCorrectionResult result = client(closedBreaker())
-                .correct("p", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "안녕하세요.", null);
+                .correct("p", Receiver.DIRECT_SUPERVISOR, "안녕하세요.", null);
 
         assertThat(result).isSameAs(GEMINI);
-        verify(fallback, never()).correctAsync(any(), any(), any(), any(), any());
+        verify(fallback, never()).correctAsync(any(), any(), any(), any());
     }
 
     @Test
     @DisplayName("primary 즉시 실패 시 fallback(GPT) 결과")
     void immediateFailureUsesFallback() {
-        when(primary.correctAsync(any(), any(), any(), any(), any()))
+        when(primary.correctAsync(any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("gemini 500")));
-        when(fallback.correctAsync(any(), any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(GPT));
+        when(fallback.correctAsync(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(GPT));
 
         AiCorrectionResult result = client(closedBreaker())
-                .correct("p", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "안녕하세요.", null);
+                .correct("p", Receiver.DIRECT_SUPERVISOR, "안녕하세요.", null);
 
         assertThat(result).isSameAs(GPT);
     }
@@ -85,25 +84,25 @@ class FailoverAiCorrectionClientTest {
     void circuitOpenGoesFallbackDirect() {
         AiCircuitBreaker breaker = closedBreaker();
         for (int i = 0; i < 5; i++) breaker.recordPrimaryFailure();
-        when(fallback.correctAsync(any(), any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(GPT));
+        when(fallback.correctAsync(any(), any(), any(), any())).thenReturn(CompletableFuture.completedFuture(GPT));
 
         AiCorrectionResult result = client(breaker)
-                .correct("p", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "안녕하세요.", null);
+                .correct("p", Receiver.DIRECT_SUPERVISOR, "안녕하세요.", null);
 
         assertThat(result).isSameAs(GPT);
-        verify(primary, never()).correctAsync(any(), any(), any(), any(), any());
+        verify(primary, never()).correctAsync(any(), any(), any(), any());
     }
 
     @Test
     @DisplayName("primary·fallback 둘 다 실패면 예외")
     void bothFailThrows() {
-        when(primary.correctAsync(any(), any(), any(), any(), any()))
+        when(primary.correctAsync(any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("gemini")));
-        when(fallback.correctAsync(any(), any(), any(), any(), any()))
+        when(fallback.correctAsync(any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("gpt")));
 
         assertThatThrownBy(() -> client(closedBreaker())
-                .correct("p", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "안녕하세요.", null))
+                .correct("p", Receiver.DIRECT_SUPERVISOR, "안녕하세요.", null))
                 .isInstanceOf(IllegalStateException.class);
     }
 }

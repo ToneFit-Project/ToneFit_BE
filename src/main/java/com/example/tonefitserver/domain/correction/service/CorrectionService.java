@@ -1,7 +1,6 @@
 package com.example.tonefitserver.domain.correction.service;
 
 import com.example.tonefitserver.core.enums.ErrorType;
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.core.enums.TermsType;
 import com.example.tonefitserver.core.enums.UserStatus;
@@ -80,7 +79,7 @@ public class CorrectionService {
         long start = System.currentTimeMillis();
         AiCorrectionResult result;
         try {
-            result = aiClient.correct(input.promptContent(), input.receiver(), input.purpose(),
+            result = aiClient.correct(input.promptContent(), input.receiver(),
                     input.original(), input.protectedRanges());
         } catch (Exception e) {
             throw new BusinessException(ErrorType.AI_SERVICE_ERROR,
@@ -105,7 +104,6 @@ public class CorrectionService {
                 user.getId(),
                 prompt != null ? prompt.getContent() : null,
                 req.receiverType(),
-                req.purpose(),
                 TextSanitizer.sanitize(req.originalEmail()),
                 toRanges(req.protectedRanges())
         );
@@ -122,7 +120,6 @@ public class CorrectionService {
                 User userRef = userRepository.getReferenceById(input.userId());
                 Map<String, Object> payload = new HashMap<>();
                 payload.put("recipient_type", input.receiver() == null ? null : input.receiver().name());
-                payload.put("purpose", input.purpose() == null ? null : input.purpose().name());
                 payload.put("input_length", input.original() == null ? 0 : input.original().length());
                 payload.put("change_count", changeCount);
                 payload.put("duration_ms", durationMs);
@@ -154,7 +151,6 @@ public class CorrectionService {
                 .map(it -> RejectedCorrection.of(
                         user.getId(),
                         req.receiverType(),
-                        req.purpose(),
                         it.label(),
                         TextSanitizer.sanitize(it.originalPhrase()),
                         TextSanitizer.sanitize(it.correctedPhrase()),
@@ -206,7 +202,7 @@ public class CorrectionService {
             Long userId,
             String promptContent,
             Receiver receiver,
-            Purpose purpose,
+
             String original,
             List<Range> protectedRanges
     ) {
