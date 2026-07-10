@@ -1,6 +1,14 @@
-# Tonefit Server
+# ToneFit Server
 
-Tonefit 서비스의 백엔드 시스템입니다. Java 21과 Spring Boot 4를 기반으로 구축되었습니다.
+**ToneFit — 한국어 비즈니스 이메일 어시스턴트**의 백엔드입니다. 수신자·상황에 맞는 격식으로
+이메일을 **교정(Correction)·생성(Generation)·회신(Reply)** 하는 3가지 AI 기능을 제공합니다.
+(이름과 달리 피트니스 서비스가 아닙니다 — "톤(어조)을 맞춘다(fit)"는 의미입니다.)
+
+- **클라이언트**: Chrome Extension(정식, Google OAuth) + 웹 데모(생성 1종, 무인증)
+- **AI**: Gemini 주 모델 + GPT 폴오버(헤지+차단기, 기능 플래그) — 프롬프트는 DB(`prompt_version`)로 관리
+- **스택**: Java 21 · Spring Boot 4 · PostgreSQL(Flyway) · AWS(EC2/S3/SSM/Secrets Manager)
+
+문서: [CHANGELOG.md](CHANGELOG.md)(배포 단위 변경 이력) · [COMMIT_CONVENTION.md](COMMIT_CONVENTION.md)(커밋·브랜치·배포 규칙 — 기여 전 필독)
 
 ## 🏛 Architecture & Package Structure
 
@@ -8,17 +16,23 @@ Tonefit 서비스의 백엔드 시스템입니다. Java 21과 Spring Boot 4를 �
 
 ### 1. core (Technical Infrastructure)
 비즈니스 로직에 종속되지 않는 기술적 인프라와 공통 규격을 관리합니다.
-- **core.config**: 애플리케이션 전역 설정 (Security, JPA Auditing 등)
-- **core.dto**: 전역 공통 응답 규격 (`ApiResponse`)
-- **core.enums**: 공통으로 사용되는 Enum (ErrorType, UserStatus 등)
+- **core.ai**: AI 폴오버 인프라 (헤지 오케스트레이터, 차단기, async transport, OpenAI 클라이언트 공통)
+- **core.config**: 애플리케이션 전역 설정 (Security, AWS Secrets Manager 주입 등)
+- **core.dto**: 전역 공통 응답 규격 (`ApiResponse`) 및 공용 DTO
+- **core.enums**: 공통으로 사용되는 Enum (ErrorType, Receiver, Purpose, TermsType 등)
 - **core.exception**: 전역 예외 처리 클래스 및 핸들러
-- **core.security**: 인증/인가 관련 핵심 로직 (JWT Provider, Filter)
+- **core.security**: 인증/인가·보호 로직 (JWT Provider/Filter, Rate Limit, TextSanitizer)
+- **core.web**: 웹 계층 공통 설정
 
 ### 2. domain (Business Logic)
 서비스의 핵심 비즈니스 기능과 데이터 모델을 담습니다. 각 기능별로 하위 패키지를 구성합니다.
-- **domain.user**: 사용자 데이터 모델(Entity) 및 저장소(Repository)
-- **domain.auth**: 회원가입, 로그인 등 인증 비즈니스 서비스 및 API 컨트롤러
-- **domain.xxxx**: 향후 추가될 비즈니스 도메인들 (운동, 식단 등)
+- **domain.correction**: 이메일 교정 — 수신자 격식 기준 3계층(필수/추천/참고) 교정, 거절 항목 보존
+- **domain.generation**: 이메일 생성 — 개요 입력 → 완성 메일 (웹 데모는 이 기능만 무인증 제공)
+- **domain.reply**: 받은 메일 회신 — 요약·파악·작성 3-호출 무상태 파이프라인 + 내부 점검
+- **domain.auth**: Google OAuth 로그인, refresh token(RTR) 갱신/로그아웃
+- **domain.user**: 사용자·약관 동의 관리
+- **domain.prompt**: AI 프롬프트 버전 관리 (`prompt_version` — 기능×수신자 단위, Flyway 시드)
+- **domain.event**: 측정 이벤트 기록 (`event_log` + Amplitude 미러링)
 
 ### 💡 설계 원칙
 - **기능 기반 패키징**: `service`, `repository`와 같은 계층형 패키징 대신, 도메인(기능)별로 관련 클래스들을 응집시켜 관리합니다.
@@ -44,7 +58,8 @@ Tonefit 서비스의 백엔드 시스템입니다. Java 21과 Spring Boot 4를 �
 
 2단계: 배포
   deploy/x.x.x 브랜치 생성
-  └── gradle.properties에서 version 값만 올리기 (예: 0.0.2 → 0.0.3)
+  └── gradle.properties에서 version 값 올리기 (예: 0.0.2 → 0.0.3)
+  └── CHANGELOG.md에 해당 버전 섹션 추가 (직전 배포 이후 커밋 제목 — COMMIT_CONVENTION.md 참조)
   └── main으로 PR 머지
       └── GitHub Actions 자동 실행 → EC2 배포 완료
 ```
@@ -76,9 +91,9 @@ GitHub Actions (build)
   └── JAR 빌드 → S3 업로드
 
 GitHub Actions (deploy)
-  └── SSM Send Command → EC2
+  └── SSM Send Command → EC2 (/app/deploy.sh)
         └── S3에서 JAR 다운로드
-        └── 서비스 재시작 (systemctl restart tonefit)
+        └── Blue/Green 전환 (대기 인스턴스 기동·헬스체크 후 nginx 스위칭 — 무중단)
 ```
 
 > EC2에 직접 SSH 접속 없이 AWS SSM을 통해 명령이 전달됩니다.
