@@ -56,6 +56,9 @@ jwt:
   # refresh token 수명(일) — chrome.identity silent 갱신 불가 판명(2026-07)으로 RTR 재도입 (V26).
   # 임시 14일(PM 협의값) — AWS(JWT_REFRESH_EXPIRATION_DAYS)로 재배포 없이 조정.
   refresh-expiration-days: ${JWT_REFRESH_EXPIRATION_DAYS:14}
+  # RTR 재사용 유예(초, V28) — 소진 후 이 시간 내 재제시는 응답 유실 재시도로 보고 철회 대신 재회전.
+  # 0 이면 유예 없음(모든 재사용 즉시 family 철회).
+  refresh-reuse-grace-seconds: ${JWT_REFRESH_REUSE_GRACE_SECONDS:15}
 
 ai:
   provider: stub

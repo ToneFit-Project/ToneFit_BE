@@ -41,7 +41,12 @@ class RefreshTokenServiceTest {
         repository = mock(RefreshTokenRepository.class);
         userRepository = mock(UserRepository.class);
         jwtTokenProvider = mock(JwtTokenProvider.class);
-        service = new RefreshTokenService(repository, userRepository, jwtTokenProvider, 14);
+        service = new RefreshTokenService(repository, userRepository, jwtTokenProvider, 14, 15);
+    }
+
+    /** 유예 0초 — 모든 재사용이 즉시 철회되는 구성 (재사용 봉쇄 검증용). */
+    private RefreshTokenService noGraceService() {
+        return new RefreshTokenService(repository, userRepository, jwtTokenProvider, 14, 0);
     }
 
     private RefreshToken activeRow(Long userId) {
@@ -75,7 +80,7 @@ class RefreshTokenServiceTest {
 
         assertThat(result.accessToken()).isEqualTo("new-access");
         assertThat(result.refreshToken()).isNotBlank();
-        assertThat(row.isConsumedOrRevoked()).isTrue();   // 기존 행 소진
+        assertThat(row.isUsed()).isTrue();   // 기존 행 소진
 
         ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
         verify(repository).save(captor.capture());
@@ -83,17 +88,36 @@ class RefreshTokenServiceTest {
     }
 
     @Test
-    @DisplayName("재사용 감지 — used 행이 다시 제시되면 family 전체 철회 + 401")
+    @DisplayName("재사용 감지(유예 밖) — used 행이 다시 제시되면 family 전체 철회 + 401")
     void reuseRevokesWholeFamily() {
         RefreshToken row = activeRow(293L);
-        row.markUsed();
+        row.markUsed(LocalDateTime.now());
         when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(row));
 
-        assertThatThrownBy(() -> service.rotate("stolen"))
+        assertThatThrownBy(() -> noGraceService().rotate("stolen"))
                 .isInstanceOf(BusinessException.class)
                 .satisfies(e -> assertThat(((BusinessException) e).getErrorType()).isEqualTo(ErrorType.INVALID_TOKEN));
         verify(repository).revokeFamily(eq(row.getFamilyId()), any(LocalDateTime.class));
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("유예 내 재제시(응답 유실 재시도) — 철회 없이 같은 family 로 한 번 더 회전")
+    void replayWithinGraceReRotates() {
+        RefreshToken row = activeRow(293L);
+        row.markUsed(LocalDateTime.now());   // 방금 소진 — 기본 유예 15초 내
+        when(repository.findByTokenHash(anyString())).thenReturn(Optional.of(row));
+        when(userRepository.findByIdAndStatus(293L, UserStatus.ACTIVE)).thenReturn(Optional.of(mock(User.class)));
+        when(jwtTokenProvider.createAccessToken(293L)).thenReturn("replay-access");
+
+        RefreshResponse result = service.rotate("lost-response-retry");
+
+        assertThat(result.accessToken()).isEqualTo("replay-access");
+        assertThat(result.refreshToken()).isNotBlank();
+        verify(repository, never()).revokeFamily(any(), any());
+        ArgumentCaptor<RefreshToken> captor = ArgumentCaptor.forClass(RefreshToken.class);
+        verify(repository).save(captor.capture());
+        assertThat(captor.getValue().getFamilyId()).isEqualTo(row.getFamilyId());
     }
 
     @Test

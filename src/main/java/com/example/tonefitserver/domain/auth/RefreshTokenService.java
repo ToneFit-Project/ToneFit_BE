@@ -32,8 +32,11 @@ import java.util.UUID;
  *   <li><b>opaque 토큰</b>: 256bit 랜덤(base64url). 서버는 SHA-256 해시만 보관 — DB 유출에도 재사용 불가.
  *       JWT 가 아니므로 access 자리에 오용될 수 없다(JwtAuthenticationFilter 검증 실패 → 401).</li>
  *   <li><b>RTR</b>: 갱신마다 기존 행 used 처리 + 같은 family 새 행 발급. used/revoked 행이 다시
- *       제시되면 재사용(탈취 신호)으로 family 전체 철회 — FE 는 갱신 호출을 single-flight 로 직렬화할 것
- *       (동시 이중 갱신도 재사용으로 판정됨).</li>
+ *       제시되면 재사용(탈취 신호)으로 family 전체 철회 — FE 는 갱신 호출을 single-flight 로 직렬화할 것.</li>
+ *   <li><b>재사용 유예(reuse interval, V28)</b>: 소진 후 유예(기본 15초, {@code jwt.refresh-reuse-grace-seconds})
+ *       내 재제시는 갱신 응답 유실 후 재시도로 보고 철회 대신 한 번 더 회전 — single-flight 로도 못 막는
+ *       "회전은 됐는데 응답을 못 받은" 케이스의 강제 로그아웃 방지. 유예 창 동안 family 에 활성 토큰이
+ *       일시적으로 2개 존재하는 것은 감수.</li>
  *   <li><b>철회</b>: 로그아웃 시 제시 토큰의 family 철회. 미존재 토큰은 조용히 무시(유효성 노출 방지).</li>
  * </ul>
  */
@@ -47,15 +50,18 @@ public class RefreshTokenService {
     private final UserRepository userRepository;
     private final JwtTokenProvider jwtTokenProvider;
     private final long refreshValidityDays;
+    private final long reuseGraceSeconds;
 
     public RefreshTokenService(RefreshTokenRepository refreshTokenRepository,
                                UserRepository userRepository,
                                JwtTokenProvider jwtTokenProvider,
-                               @Value("${jwt.refresh-expiration-days}") long refreshValidityDays) {
+                               @Value("${jwt.refresh-expiration-days}") long refreshValidityDays,
+                               @Value("${jwt.refresh-reuse-grace-seconds}") long reuseGraceSeconds) {
         this.refreshTokenRepository = refreshTokenRepository;
         this.userRepository = userRepository;
         this.jwtTokenProvider = jwtTokenProvider;
         this.refreshValidityDays = refreshValidityDays;
+        this.reuseGraceSeconds = reuseGraceSeconds;
     }
 
     /** 로그인 시 새 family 로 refresh 발급 — 원문 반환(응답 body 전용), 저장은 해시만. */
@@ -78,8 +84,13 @@ public class RefreshTokenService {
                 .orElseThrow(() -> new BusinessException(ErrorType.INVALID_TOKEN, "유효하지 않은 refresh token 입니다."));
         LocalDateTime now = LocalDateTime.now();
 
-        if (row.isConsumedOrRevoked()) {
-            // 재사용 감지 — 탈취(또는 FE 이중 갱신) 신호. family 전체 철회로 봉쇄.
+        // 철회된 family(로그아웃·재사용 봉쇄 이후) — 유예 없이 거절.
+        if (row.getRevokedAt() != null) {
+            throw new BusinessException(ErrorType.INVALID_TOKEN, "유효하지 않은 refresh token 입니다.");
+        }
+        boolean graceReplay = row.isWithinReuseGrace(now, reuseGraceSeconds);
+        if (row.isUsed() && !graceReplay) {
+            // 재사용 감지 — 탈취(또는 유예를 넘긴 지연 재시도) 신호. family 전체 철회로 봉쇄.
             refreshTokenRepository.revokeFamily(row.getFamilyId(), now);
             log.warn("refresh token reuse detected userId={} familyId={}", row.getUserId(), row.getFamilyId());
             throw new BusinessException(ErrorType.INVALID_TOKEN, "유효하지 않은 refresh token 입니다.");
@@ -91,7 +102,14 @@ public class RefreshTokenService {
         userRepository.findByIdAndStatus(row.getUserId(), UserStatus.ACTIVE)
                 .orElseThrow(() -> new BusinessException(ErrorType.INVALID_TOKEN, "유효하지 않은 refresh token 입니다."));
 
-        row.markUsed();
+        if (graceReplay) {
+            // 갱신 응답 유실 후 재시도 — 철회 대신 한 번 더 회전(reuse interval). 직전 발급본은
+            // 해시만 보관이라 재전달이 불가능해 새 토큰을 추가 발급한다. 제시된 행은 이미 used 라 그대로 둠.
+            log.info("refresh token replay within grace — re-rotating userId={} familyId={}",
+                    row.getUserId(), row.getFamilyId());
+        } else {
+            row.markUsed(now);
+        }
         String newRaw = generateToken();
         refreshTokenRepository.save(new RefreshToken(
                 row.getUserId(), row.getFamilyId(), sha256Hex(newRaw), now.plusDays(refreshValidityDays)));
