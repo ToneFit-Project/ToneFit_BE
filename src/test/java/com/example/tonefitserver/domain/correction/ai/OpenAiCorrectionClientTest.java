@@ -3,7 +3,6 @@ package com.example.tonefitserver.domain.correction.ai;
 import com.example.tonefitserver.core.ai.AiHttpTransport;
 import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.OpenAiProperties;
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -60,7 +59,7 @@ class OpenAiCorrectionClientTest {
                 transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
 
         AiCorrectionResult result = client.correctAsync("system", Receiver.DIRECT_SUPERVISOR,
-                Purpose.NOTICE, "안녕하세요. 회신 바랍니다.", null).get(2, TimeUnit.SECONDS);
+                "안녕하세요. 회신 바랍니다.", null).get(2, TimeUnit.SECONDS);
 
         assertThat(result.changes()).hasSize(1);
         assertThat(result.changes().get(0).corrected()).isEqualTo("회신 부탁드립니다");
@@ -78,7 +77,7 @@ class OpenAiCorrectionClientTest {
         OpenAiCorrectionClient client = new OpenAiCorrectionClient(
                 transport, new OpenAiProperties("k", "https://api.openai.com/v1", "gpt-test", "gpt-test"), FAILOVER, mapper);
 
-        assertThat(client.correctAsync("s", Receiver.DIRECT_SUPERVISOR, Purpose.NOTICE, "안녕하세요.", null))
+        assertThat(client.correctAsync("s", Receiver.DIRECT_SUPERVISOR, "안녕하세요.", null))
                 .isCompletedExceptionally();
     }
 }

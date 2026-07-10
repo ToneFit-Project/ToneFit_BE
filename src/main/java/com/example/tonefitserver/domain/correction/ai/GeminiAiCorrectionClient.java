@@ -1,6 +1,5 @@
 package com.example.tonefitserver.domain.correction.ai;
 
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.domain.correction.model.Range;
 import lombok.RequiredArgsConstructor;
@@ -18,7 +17,7 @@ import java.util.Map;
 /**
  * Gemini structured output 기반 교정 클라이언트. v0.5 부터 교정 단일 메서드만 유지.
  *
- * <p>입력은 보호 구간 마커(⟦…⟧)로 감싸진 본문 + receiver/purpose. 응답은 reasoning(선행 CoT, 폐기) +
+ * <p>입력은 보호 구간 마커(⟦…⟧)로 감싸진 본문 + receiver. 응답은 reasoning(선행 CoT, 폐기) +
  * changes 배열. 마커 삽입·changes 정제(위치 탐색·보호 구간 drop)는 {@link CorrectionSupport} 공용 로직.
  */
 @Slf4j
@@ -60,13 +59,13 @@ public class GeminiAiCorrectionClient implements AiCorrectionClient {
     private final ObjectMapper objectMapper;
 
     @Override
-    public AiCorrectionResult correct(String promptContent, Receiver receiver, Purpose purpose,
+    public AiCorrectionResult correct(String promptContent, Receiver receiver,
                                       String original, List<Range> protectedRanges) {
         String system = (promptContent == null || promptContent.isBlank())
                 ? DEFAULT_CORRECTION_SYSTEM_PROMPT : promptContent;
         String safeOriginal = original == null ? "" : original;
         String preparedOriginal = CorrectionSupport.insertMarkers(safeOriginal, protectedRanges);
-        String user = CorrectionSupport.buildUserMessage(receiver, purpose, preparedOriginal);
+        String user = CorrectionSupport.buildUserMessage(receiver, preparedOriginal);
         String json = callAndExtract(system, user, correctionSchema());
 
         // reasoning(선행 CoT)은 과교정 방지용 사고 과정 — 폐기(메일 내용 섞일 수 있어 로깅·노출·영속 금지). changes 만.

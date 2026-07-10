@@ -4,7 +4,6 @@ import com.example.tonefitserver.core.ai.AiExceptions;
 import com.example.tonefitserver.core.ai.AiHttpTransport;
 import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.GeminiApiResponse;
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.domain.correction.model.Range;
 import lombok.RequiredArgsConstructor;
@@ -45,13 +44,13 @@ public class GeminiAsyncCorrectionClient implements AsyncAiCorrectionClient {
     private final ObjectMapper objectMapper;
 
     @Override
-    public CompletableFuture<AiCorrectionResult> correctAsync(String promptContent, Receiver receiver, Purpose purpose,
+    public CompletableFuture<AiCorrectionResult> correctAsync(String promptContent, Receiver receiver,
                                                               String original, List<Range> protectedRanges) {
         String system = (promptContent == null || promptContent.isBlank())
                 ? DEFAULT_CORRECTION_SYSTEM_PROMPT : promptContent;
         String safeOriginal = original == null ? "" : original;
         String preparedOriginal = CorrectionSupport.insertMarkers(safeOriginal, protectedRanges);
-        String user = CorrectionSupport.buildUserMessage(receiver, purpose, preparedOriginal);
+        String user = CorrectionSupport.buildUserMessage(receiver, preparedOriginal);
 
         String body;
         try {

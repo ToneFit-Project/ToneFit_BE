@@ -3,7 +3,6 @@ package com.example.tonefitserver.domain.correction.ai;
 import com.example.tonefitserver.core.ai.AiCircuitBreaker;
 import com.example.tonefitserver.core.ai.FailoverProperties;
 import com.example.tonefitserver.core.ai.HedgedFailover;
-import com.example.tonefitserver.core.enums.Purpose;
 import com.example.tonefitserver.core.enums.Receiver;
 import com.example.tonefitserver.domain.correction.model.Range;
 import lombok.extern.slf4j.Slf4j;
@@ -54,16 +53,16 @@ public class FailoverAiCorrectionClient implements AiCorrectionClient {
     }
 
     @Override
-    public AiCorrectionResult correct(String promptContent, Receiver receiver, Purpose purpose,
+    public AiCorrectionResult correct(String promptContent, Receiver receiver,
                                       String original, List<Range> protectedRanges) {
         if (!breaker.primaryAllowed()) {
             log.info("ai_failover op=correction route=fallback_direct reason=circuit_open");
-            return block(fallback.correctAsync(promptContent, receiver, purpose, original, protectedRanges));
+            return block(fallback.correctAsync(promptContent, receiver, original, protectedRanges));
         }
 
         Supplier<CompletableFuture<AiCorrectionResult>> primarySupplier = () -> {
             CompletableFuture<AiCorrectionResult> f =
-                    primary.correctAsync(promptContent, receiver, purpose, original, protectedRanges);
+                    primary.correctAsync(promptContent, receiver, original, protectedRanges);
             // 차단기 기록: Gemini 자체 성공/실패(레이스 승패 무관). copy() 로 관찰만 — 헤지가 쓰는 f 는 안 건드린다.
             f.copy().orTimeout(deadlineMs, TimeUnit.MILLISECONDS).whenComplete((v, ex) -> {
                 if (ex == null) breaker.recordPrimarySuccess();
@@ -72,7 +71,7 @@ public class FailoverAiCorrectionClient implements AiCorrectionClient {
             return f;
         };
         Supplier<CompletableFuture<AiCorrectionResult>> fallbackSupplier =
-                () -> fallback.correctAsync(promptContent, receiver, purpose, original, protectedRanges);
+                () -> fallback.correctAsync(promptContent, receiver, original, protectedRanges);
 
         return block(HedgedFailover.run(primarySupplier, fallbackSupplier, hedgeDelayMs, deadlineMs, scheduler));
     }
