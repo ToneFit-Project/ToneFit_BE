@@ -53,6 +53,9 @@ spring.lifecycle:
 jwt:
   secret: ${JWT_SECRET}
   expiration: 3600000 # 1 hour
+  # refresh token 수명(일) — chrome.identity silent 갱신 불가 판명(2026-07)으로 RTR 재도입 (V26).
+  # 임시 14일(PM 협의값) — AWS(JWT_REFRESH_EXPIRATION_DAYS)로 재배포 없이 조정.
+  refresh-expiration-days: ${JWT_REFRESH_EXPIRATION_DAYS:14}
 
 ai:
   provider: stub

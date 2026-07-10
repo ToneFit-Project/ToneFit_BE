@@ -58,6 +58,10 @@ public class AwsSecretsManagerEnvironmentInitializer
 
             JsonNode app = mapper.readTree(fetchSecret(client, APP_SECRET_NAME));
             properties.put("jwt.secret", app.get("JWT_SECRET").asText());
+            // refresh 수명(일) — 선택(없으면 yaml 기본 14일). RTR 재도입(V26).
+            if (app.hasNonNull("JWT_REFRESH_EXPIRATION_DAYS")) {
+                properties.put("jwt.refresh-expiration-days", app.get("JWT_REFRESH_EXPIRATION_DAYS").asText());
+            }
             properties.put("gemini.api-key", app.get("GEMINI_API_KEY").asText());
             properties.put("gemini.model", app.get("GEMINI_MODEL").asText());
             // 회신 보조 단계(요약·파악·점검)용 저가 모델 — 없으면 gemini.model 로 fallback (FUNC-Rep-15)

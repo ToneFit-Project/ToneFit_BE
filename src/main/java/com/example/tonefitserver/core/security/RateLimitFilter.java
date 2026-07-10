@@ -55,6 +55,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         int perMinute = properties.perMinute();
         this.rules = List.of(
                 new RateLimitRule("POST", "/api/v1/auth/google", perMinute, WINDOW),
+                // refresh 무차별 대입(토큰 추측·재사용 스프레이) 방어 — 정상 FE 는 시간당 1회 수준.
+                new RateLimitRule("POST", "/api/v1/auth/refresh", perMinute, WINDOW),
                 new RateLimitRule("POST", "/api/v1/corrections", perMinute, WINDOW),
                 new RateLimitRule("POST", "/api/v1/generations", perMinute, WINDOW),
                 // 회신 — 인증 필수 경로라 계정 한도(분당 3회)가 1차 방어. IP 룰은 무인증 스프레이 등 2차 방어.
