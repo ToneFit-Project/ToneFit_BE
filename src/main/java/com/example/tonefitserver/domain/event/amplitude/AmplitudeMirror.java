@@ -4,6 +4,7 @@ import com.example.tonefitserver.domain.event.EventLogPersisted;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
@@ -21,6 +22,8 @@ import java.util.Map;
  * <p>정책:
  * <ul>
  *   <li>amplitude.enabled=true 일 때만 빈 등록</li>
+ *   <li>전용 풀({@code amplitudeExecutor})에서 비동기 실행 — AFTER_COMMIT 리스너는 기본이
+ *       요청 스레드 동기 실행이라, 외부 왕복(+재시도 1초 대기)이 응답 지연·워커 점유로 이어지는 것 차단</li>
  *   <li>1회 재시도 (1초 backoff)</li>
  *   <li>최종 실패 시 로그만 남기고 예외 전파하지 않음 (도메인 트랜잭션은 이미 커밋됨)</li>
  *   <li>insert_id 는 BE 가 생성한 client_event_id 를 그대로 사용 → 멱등 보장</li>
@@ -38,6 +41,7 @@ public class AmplitudeMirror {
     private final RestClient amplitudeRestClient;
     private final AmplitudeProperties properties;
 
+    @Async("amplitudeExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     public void onEventLogPersisted(EventLogPersisted event) {
         Map<String, Object> body = buildBody(event);
