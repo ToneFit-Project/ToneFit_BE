@@ -43,6 +43,10 @@ public class RefreshToken {
     @Column(nullable = false)
     private boolean used;
 
+    /** 소진 시각 — 재사용 유예(reuse interval) 판정 기준. V28. */
+    @Column(name = "used_at")
+    private LocalDateTime usedAt;
+
     @Column(name = "revoked_at")
     private LocalDateTime revokedAt;
 
@@ -61,17 +65,21 @@ public class RefreshToken {
         this.createdAt = LocalDateTime.now();
     }
 
-    /** 회전으로 소진 — 이후 이 행이 다시 제시되면 재사용 신호. */
-    public void markUsed() {
+    /** 회전으로 소진 — 이후 이 행이 다시 제시되면 재사용 신호 (유예 내 재시도만 예외). */
+    public void markUsed(LocalDateTime now) {
         this.used = true;
+        this.usedAt = now;
     }
 
     public boolean isExpired(LocalDateTime now) {
         return !expiresAt.isAfter(now);
     }
 
-    /** 재사용·철회 상태 — 다시 제시되면 family 전체 철회 대상. */
-    public boolean isConsumedOrRevoked() {
-        return used || revokedAt != null;
+    /**
+     * 재사용 유예(reuse interval) 판정 — 소진된 지 {@code graceSeconds} 이내의 재제시는
+     * 갱신 응답 유실 후 재시도로 보고 철회 대신 재회전을 허용한다. used_at 이 없는(V28 이전) 행은 false.
+     */
+    public boolean isWithinReuseGrace(LocalDateTime now, long graceSeconds) {
+        return used && usedAt != null && usedAt.plusSeconds(graceSeconds).isAfter(now);
     }
 }

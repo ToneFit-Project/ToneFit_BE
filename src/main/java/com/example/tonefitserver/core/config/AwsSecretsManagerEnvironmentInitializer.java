@@ -62,6 +62,10 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("JWT_REFRESH_EXPIRATION_DAYS")) {
                 properties.put("jwt.refresh-expiration-days", app.get("JWT_REFRESH_EXPIRATION_DAYS").asText());
             }
+            // RTR 재사용 유예(초) — 선택(없으면 yaml 기본 15초). V28.
+            if (app.hasNonNull("JWT_REFRESH_REUSE_GRACE_SECONDS")) {
+                properties.put("jwt.refresh-reuse-grace-seconds", app.get("JWT_REFRESH_REUSE_GRACE_SECONDS").asText());
+            }
             properties.put("gemini.api-key", app.get("GEMINI_API_KEY").asText());
             properties.put("gemini.model", app.get("GEMINI_MODEL").asText());
             // 회신 보조 단계(요약·파악·점검)용 저가 모델 — 없으면 gemini.model 로 fallback (FUNC-Rep-15)
