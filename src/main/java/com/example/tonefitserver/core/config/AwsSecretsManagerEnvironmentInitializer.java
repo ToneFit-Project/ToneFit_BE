@@ -96,6 +96,26 @@ public class AwsSecretsManagerEnvironmentInitializer
             if (app.hasNonNull("OPENAI_CORRECTION_MODEL")) {
                 properties.put("openai.correction-model", app.get("OPENAI_CORRECTION_MODEL").asText());
             }
+            // AI 폴오버(헤지+차단기) 스위치·임계값 — 모두 선택(없으면 yaml 기본: enabled=false, dormant).
+            // 이 매핑이 있어야 AWS 시크릿만으로 활성/튜닝 가능 — 값 변경은 앱 재시작 시 반영.
+            if (app.hasNonNull("AI_FAILOVER_ENABLED")) {
+                properties.put("ai.failover.enabled", app.get("AI_FAILOVER_ENABLED").asText());
+            }
+            if (app.hasNonNull("AI_FAILOVER_HEDGE_DELAY_MS")) {
+                properties.put("ai.failover.hedge-delay-ms", app.get("AI_FAILOVER_HEDGE_DELAY_MS").asText());
+            }
+            if (app.hasNonNull("AI_FAILOVER_DEADLINE_MS")) {
+                properties.put("ai.failover.deadline-ms", app.get("AI_FAILOVER_DEADLINE_MS").asText());
+            }
+            if (app.hasNonNull("AI_FAILOVER_CIRCUIT_FAILURES")) {
+                properties.put("ai.failover.circuit.failure-threshold", app.get("AI_FAILOVER_CIRCUIT_FAILURES").asText());
+            }
+            if (app.hasNonNull("AI_FAILOVER_CIRCUIT_WINDOW_MS")) {
+                properties.put("ai.failover.circuit.window-ms", app.get("AI_FAILOVER_CIRCUIT_WINDOW_MS").asText());
+            }
+            if (app.hasNonNull("AI_FAILOVER_CIRCUIT_OPEN_MS")) {
+                properties.put("ai.failover.circuit.open-ms", app.get("AI_FAILOVER_CIRCUIT_OPEN_MS").asText());
+            }
             // 계정 단위 한도 — 모두 선택(없으면 application.yml 기본값). 재배포 없이 AWS 에서 조정(FUNC-Lim-03).
             if (app.hasNonNull("USER_LIMIT_DAILY")) {
                 properties.put("limit.user.daily", app.get("USER_LIMIT_DAILY").asText());
