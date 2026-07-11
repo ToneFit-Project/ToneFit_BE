@@ -4,6 +4,45 @@
 형식을 따르되, 실제 과거 커밋 메시지는 소급 수정하지 않는다 (이 문서가 표시용 정본).
 최신 버전이 위.
 
+## [0.0.31] - 2026-07-11
+
+- fix: IP 레이트리밋 키를 CloudFront-Viewer-Address 기준으로 전환 (XFF 위조 차단)
+
+## [0.0.30] - 2026-07-11
+
+- feat: refresh token 재도입 — RTR·재사용 감지·로그아웃 부활 (V26)
+- feat: RTR 재사용 유예(reuse interval) 도입 (V28)
+- feat: 교정 입력에서 purpose(목적) 제거 (V27)
+- chore: AI 폴오버 스위치·임계값 AWS 시크릿 매핑 추가
+- fix: Amplitude 미러링을 전용 풀 비동기로 전환 (요청 스레드 비차단)
+- docs: README 현행화 — 서비스 소개·도메인 목록·Blue/Green·문서 링크
+
+## [0.0.29] - 2026-07-08
+
+- feat: 회신 작성에 요약 대체 입력 지원 (summary_lines 회송)
+- fix: 무효 Bearer 토큰은 permitAll 경로에서도 401 (데모 강등 방지)
+
+## [0.0.28] - 2026-07-07
+
+- fix: CORS 허용에 FE 테스트 확장 origin 추가
+
+## [0.0.27] - 2026-07-07
+
+- feat: 회신 작성 프롬프트 v1.2 — 중립 어체 누수 정정 + 협력사 해요체 강화 (V25)
+
+## [0.0.26] - 2026-07-07
+
+- feat: 회신 진입 약관에 개인정보 국외이전 동의 추가 (OVERSEAS_TRANSFER)
+- feat: 회신 요약을 대화 전체 3줄 요약으로 재설계 (summary_lines)
+- feat: 회신 파악 프롬프트 갱신 — 질문 문장화·첨부 규칙·CC 상향 상세
+- feat: 회신 작성 모델 gemini-3.5-flash + thinkingLevel low (PM 확정)
+- feat: 회신 작성 프롬프트에 줄바꿈 보존 규칙 추가 (V24)
+- chore: 교정 폴오버 모델을 gpt-5.4-mini 로 변경 (PM 테스트 확정)
+- chore: light-model 주석의 'PM 확정 후 지정' 문구 정리
+- fix: CORS Extension origin 을 운영 ID 로 고정
+- chore: 토폴로지·재설계 잔재 주석 정리 (ALB → CloudFront)
+- docs: 커밋 컨벤션 문서 + CHANGELOG 도입
+
 ## [0.0.25] - 2026-07-03
 
 - feat: 생성 프롬프트 갱신 반영 — 동료·협력사 해요체 강제 강화 (V23)
