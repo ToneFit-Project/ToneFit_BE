@@ -32,7 +32,10 @@ import java.util.List;
  * </ul>
  *
  * <p>한도 값은 {@link RateLimitProperties}(환경변수)로 주입 — 재배포 없이 조정.
- * <p>키: client IP (X-Forwarded-For 우선 — CloudFront 뒤. 없으면 remoteAddr).
+ * <p>키: client IP — {@code CloudFront-Viewer-Address} 헤더 기준 (origin request policy 에 포함,
+ * viewer 가 같은 이름을 보내와도 CloudFront 가 덮어써 위조 불가). X-Forwarded-For 는 첫 값이
+ * 클라이언트 조작 가능해 폐기 — fallback 시에도 CloudFront 가 append 한 최우측 값만 신뢰.
+ * (SG 가 CloudFront prefix list 로 제한되어 직결 우회 경로 없음, 2026-07)
  * <p>저장소: Caffeine LRU + TTL eviction. 최대 100k 키 / 10분 미사용 시 만료.
  * <p>알고리즘: Bucket4j 토큰 버킷 + <b>intervally refill</b> — 1분마다 capacity 를 일괄 보충(중간 보충 없음)
  *    하므로 "1분 윈도우 내 N회 초과 차단"으로 동작한다. (greedy 보충이면 초기 버스트 + 연속 보충으로
@@ -91,14 +94,46 @@ public class RateLimitFilter extends OncePerRequestFilter {
         return null;
     }
 
-    /** CloudFront 뒤이므로 X-Forwarded-For 가 우선. 콤마 구분 리스트면 첫 번째(원본 클라). */
     private String clientIp(HttpServletRequest req) {
-        String fwd = req.getHeader("X-Forwarded-For");
-        if (StringUtils.hasText(fwd)) {
-            int comma = fwd.indexOf(',');
-            return (comma > 0 ? fwd.substring(0, comma) : fwd).trim();
+        return resolveClientIp(
+                req.getHeader("CloudFront-Viewer-Address"),
+                req.getHeader("X-Forwarded-For"),
+                req.getRemoteAddr());
+    }
+
+    /**
+     * 신뢰 순서: ① CloudFront-Viewer-Address("IP:port") — 정책에 포함돼 CloudFront 가 항상
+     * viewer 값으로 덮어쓰므로 위조 불가 ② XFF 최우측 — CloudFront 가 append 한 값(왼쪽은 전부
+     * 클라이언트 조작 가능이라 첫 값 사용은 금지) ③ remoteAddr.
+     */
+    static String resolveClientIp(String viewerAddress, String xff, String remoteAddr) {
+        if (StringUtils.hasText(viewerAddress)) {
+            String ip = stripPort(viewerAddress.trim());
+            if (StringUtils.hasText(ip)) return ip;
         }
-        return req.getRemoteAddr();
+        if (StringUtils.hasText(xff)) {
+            int comma = xff.lastIndexOf(',');
+            return (comma >= 0 ? xff.substring(comma + 1) : xff).trim();
+        }
+        return remoteAddr;
+    }
+
+    /**
+     * "IP:port" → IP. CloudFront-Viewer-Address 는 항상 포트를 포함한다(AWS 명세) —
+     * IPv4 "1.2.3.4:5678", IPv6 는 무괄호 "2001:db8::1:5678" 로 오므로 마지막 콜론 뒤가
+     * 전부 숫자면 포트로 보고 떼어낸다. "[IPv6]:port" 괄호 형식도 방어적으로 처리.
+     */
+    static String stripPort(String address) {
+        if (address.startsWith("[")) {
+            int end = address.indexOf(']');
+            if (end > 0) return address.substring(1, end);
+        }
+        int colon = address.lastIndexOf(':');
+        if (colon > 0 && colon < address.length() - 1
+                && address.substring(colon + 1).chars().allMatch(Character::isDigit)) {
+            return address.substring(0, colon);
+        }
+        return address;
     }
 
     /** intervally refill: period 마다 capacity 일괄 보충. 중간 보충 없음 → 윈도우 내 capacity 초과 차단. */
